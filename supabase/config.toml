@@ -1,1 +1,4 @@
 project_id = "jdmecjxceyvtolbxtvdi"
+
+[functions.ascap-search]
+verify_jwt = false
