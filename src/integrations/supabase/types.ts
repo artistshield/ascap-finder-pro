@@ -14,7 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      saved_ipis: {
+        Row: {
+          created_at: string
+          id: string
+          ipi_number: string
+          name: string
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ipi_number: string
+          name: string
+          type: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ipi_number?: string
+          name?: string
+          type?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
