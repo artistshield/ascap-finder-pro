@@ -58,6 +58,10 @@ serve(async (req) => {
     console.log('Scraping ASCAP URL:', searchUrl);
 
     // Use Firecrawl to scrape the ASCAP search results page
+    // ASCAP is a heavy SPA that requires JavaScript execution to:
+    // 1. Accept the Terms modal
+    // 2. Wait for results to load
+    // 3. Extract data from the rendered page
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -68,11 +72,58 @@ serve(async (req) => {
         url: searchUrl,
         formats: ['markdown', 'html'],
         onlyMainContent: false,
-        waitFor: 8000, // Wait longer for dynamic content to load
-        // ASCAP is aggressive with bot protections; Firecrawl's cookie/ad blocker can trigger internal actions.
-        // Disabling it avoids "ActionError: Element not found" failures.
+        waitFor: 5000,
         blockAds: false,
         proxy: 'stealth',
+        actions: [
+          { type: 'wait', milliseconds: 3000 },
+          // Click "I Agree" button using JavaScript - more reliable than CSS selector
+          { 
+            type: 'executeJavascript', 
+            script: `
+              const buttons = document.querySelectorAll('button, a, span');
+              for (const btn of buttons) {
+                if (btn.textContent && btn.textContent.trim() === 'I Agree') {
+                  btn.click();
+                  break;
+                }
+              }
+              return 'clicked';
+            `
+          },
+          { type: 'wait', milliseconds: 6000 },
+          // Extract search results using JavaScript
+          {
+            type: 'executeJavascript',
+            script: `
+              const results = [];
+              // Look for table rows or list items containing IPI data
+              const rows = document.querySelectorAll('tr, .result-row, [class*="result"]');
+              rows.forEach(row => {
+                const text = row.textContent || '';
+                // Look for IPI numbers (9-11 digits)
+                const ipiMatch = text.match(/(\\d{9,11})/);
+                if (ipiMatch) {
+                  // Try to find the name - usually in the first cell or before the IPI
+                  const cells = row.querySelectorAll('td, span, div');
+                  let name = '';
+                  for (const cell of cells) {
+                    const cellText = cell.textContent?.trim() || '';
+                    // Name is likely text that's not a number and not too long
+                    if (cellText && !cellText.match(/^\\d+$/) && cellText.length > 2 && cellText.length < 80) {
+                      name = cellText;
+                      break;
+                    }
+                  }
+                  if (name && ipiMatch[1]) {
+                    results.push({ name, ipi: ipiMatch[1] });
+                  }
+                }
+              });
+              return JSON.stringify(results);
+            `
+          }
+        ],
       }),
     });
 
@@ -89,12 +140,26 @@ serve(async (req) => {
     const markdown = data.data?.markdown || data.markdown || '';
     const html = data.data?.html || data.html || '';
     
+    // Check for JavaScript execution results (from our extract script)
+    const jsReturns = data.data?.actions?.javascriptReturns || [];
+    let jsExtractedResults: Array<{name: string, ipi: string}> = [];
+    
+    // The second JS action (index 1) contains our extracted results
+    if (jsReturns.length > 1 && jsReturns[1]?.value) {
+      try {
+        jsExtractedResults = JSON.parse(jsReturns[1].value);
+        console.log('JS extracted results:', jsExtractedResults);
+      } catch (e) {
+        console.log('Failed to parse JS results:', jsReturns[1]?.value);
+      }
+    }
+    
     // Log first 2000 chars of HTML for debugging
     console.log('HTML preview (first 2000 chars):', html.substring(0, 2000));
     console.log('Markdown preview (first 1500 chars):', markdown.substring(0, 1500));
 
     // Parse the scraped content to extract IPI information
-    const results = parseASCAPResults(markdown, html, searchType);
+    const results = parseASCAPResults(markdown, html, searchType, jsExtractedResults);
 
     console.log(`Found ${results.length} results for ${searchType}: ${query}`);
 
@@ -112,11 +177,33 @@ serve(async (req) => {
   }
 });
 
-function parseASCAPResults(markdown: string, html: string, searchType: string): SearchResult[] {
+function parseASCAPResults(
+  markdown: string, 
+  html: string, 
+  searchType: string,
+  jsExtracted: Array<{name: string, ipi: string}> = []
+): SearchResult[] {
   const results: SearchResult[] = [];
   const seen = new Set<string>();
   
-  // Try to parse from HTML first - look for table rows with IPI data
+  // First, use any results extracted via JavaScript execution (most reliable)
+  for (const item of jsExtracted) {
+    if (item.ipi && item.name && !seen.has(item.ipi)) {
+      seen.add(item.ipi);
+      results.push({
+        name: formatName(item.name),
+        ipiNumber: item.ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer'
+      });
+    }
+  }
+  
+  // If we got JS results, return them (most accurate)
+  if (results.length > 0) {
+    return results.slice(0, 50);
+  }
+  
+  // Fallback: Try to parse from HTML - look for table rows with IPI data
   // ASCAP typically shows results in a table with columns: Name, IPI#, etc.
   
   // Pattern for IPI numbers (9-11 digits)
