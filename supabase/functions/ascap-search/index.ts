@@ -67,8 +67,14 @@ serve(async (req) => {
       body: JSON.stringify({
         url: searchUrl,
         formats: ['markdown', 'html'],
-        onlyMainContent: true,
-        waitFor: 3000, // Wait for dynamic content to load
+        // ASCAP gates results behind a Terms modal; keep full page content and click "I Agree".
+        onlyMainContent: false,
+        waitFor: 2000,
+        actions: [
+          { type: 'wait', milliseconds: 1500 },
+          { type: 'click', selector: 'text=I Agree' },
+          { type: 'wait', milliseconds: 6000 },
+        ],
       }),
     });
 
