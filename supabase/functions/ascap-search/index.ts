@@ -96,29 +96,56 @@ serve(async (req) => {
             type: 'executeJavascript',
             script: `(() => {
               const results = [];
-              // Look for table rows or list items containing IPI data
-              const rows = document.querySelectorAll('tr, .result-row, [class*="result"]');
-              rows.forEach((row) => {
-                const text = row.textContent || '';
-                // Look for IPI numbers (9-11 digits)
+              const seen = new Set();
+              
+              // ASCAP displays results with name, IPI label, IPI number, PRO label
+              // Try multiple strategies to find clean name + IPI pairs
+              
+              // Strategy 1: Look for elements that contain IPI numbers
+              const allElements = document.querySelectorAll('*');
+              allElements.forEach((el) => {
+                const text = el.textContent || '';
                 const ipiMatch = text.match(/(\\d{9,11})/);
-                if (ipiMatch) {
-                  // Try to find the name - usually in the first cell or before the IPI
-                  const cells = row.querySelectorAll('td, span, div');
-                  let name = '';
-                  for (const cell of cells) {
-                    const cellText = cell.textContent?.trim() || '';
-                    // Name is likely text that's not a number and not too long
-                    if (cellText && !cellText.match(/^\\d+$/) && cellText.length > 2 && cellText.length < 80) {
-                      name = cellText;
-                      break;
+                if (ipiMatch && !seen.has(ipiMatch[1])) {
+                  // Check if this is a leaf-ish element (not too much nested content)
+                  if (el.children.length < 10 && text.length < 200) {
+                    // Try to extract name by looking at the text before 'ipi' label
+                    const fullText = text.toLowerCase();
+                    const ipiIndex = fullText.indexOf('ipi');
+                    
+                    if (ipiIndex > 0) {
+                      // Get text before 'ipi', clean it up
+                      let nameText = text.substring(0, ipiIndex).trim();
+                      // Remove common noise patterns
+                      nameText = nameText.replace(/^[\\d\\s\\-]+of[\\s\\d]+results?/i, '').trim();
+                      nameText = nameText.replace(/^results?/i, '').trim();
+                      
+                      if (nameText && nameText.length > 1 && nameText.length < 80 && !nameText.match(/^\\d+$/)) {
+                        seen.add(ipiMatch[1]);
+                        results.push({ name: nameText, ipi: ipiMatch[1] });
+                      }
                     }
-                  }
-                  if (name && ipiMatch[1]) {
-                    results.push({ name, ipi: ipiMatch[1] });
                   }
                 }
               });
+              
+              // Strategy 2: Look for specific ASCAP result structure
+              if (results.length === 0) {
+                const links = document.querySelectorAll('a[href*="ace"], .writer-name, .publisher-name, .performer-name, [class*="name"]');
+                links.forEach((link) => {
+                  const nameText = link.textContent?.trim();
+                  const parent = link.closest('tr, div, li, [class*="result"]');
+                  if (parent && nameText) {
+                    const parentText = parent.textContent || '';
+                    const ipiMatch = parentText.match(/(\\d{9,11})/);
+                    if (ipiMatch && !seen.has(ipiMatch[1]) && nameText.length > 1 && nameText.length < 80) {
+                      seen.add(ipiMatch[1]);
+                      results.push({ name: nameText, ipi: ipiMatch[1] });
+                    }
+                  }
+                });
+              }
+              
               return JSON.stringify(results);
             })();`
           }
