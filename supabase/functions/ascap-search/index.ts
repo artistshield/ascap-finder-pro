@@ -69,6 +69,10 @@ serve(async (req) => {
         formats: ['markdown', 'html'],
         onlyMainContent: false,
         waitFor: 8000, // Wait longer for dynamic content to load
+        // ASCAP is aggressive with bot protections; Firecrawl's cookie/ad blocker can trigger internal actions.
+        // Disabling it avoids "ActionError: Element not found" failures.
+        blockAds: false,
+        proxy: 'stealth',
       }),
     });
 
