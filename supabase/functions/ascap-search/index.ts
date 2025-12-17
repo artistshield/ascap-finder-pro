@@ -67,14 +67,8 @@ serve(async (req) => {
       body: JSON.stringify({
         url: searchUrl,
         formats: ['markdown', 'html'],
-        // ASCAP gates results behind a Terms modal; keep full page content and click "I Agree".
         onlyMainContent: false,
-        waitFor: 2000,
-        actions: [
-          { type: 'wait', milliseconds: 1500 },
-          { type: 'click', selector: 'text=I Agree' },
-          { type: 'wait', milliseconds: 6000 },
-        ],
+        waitFor: 8000, // Wait longer for dynamic content to load
       }),
     });
 
@@ -88,8 +82,15 @@ serve(async (req) => {
       );
     }
 
+    const markdown = data.data?.markdown || data.markdown || '';
+    const html = data.data?.html || data.html || '';
+    
+    // Log first 2000 chars of HTML for debugging
+    console.log('HTML preview (first 2000 chars):', html.substring(0, 2000));
+    console.log('Markdown preview (first 1500 chars):', markdown.substring(0, 1500));
+
     // Parse the scraped content to extract IPI information
-    const results = parseASCAPResults(data.data?.markdown || data.markdown || '', searchType);
+    const results = parseASCAPResults(markdown, html, searchType);
 
     console.log(`Found ${results.length} results for ${searchType}: ${query}`);
 
@@ -107,45 +108,25 @@ serve(async (req) => {
   }
 });
 
-function parseASCAPResults(markdown: string, searchType: string): SearchResult[] {
+function parseASCAPResults(markdown: string, html: string, searchType: string): SearchResult[] {
   const results: SearchResult[] = [];
-  
-  // ASCAP typically displays results with IPI numbers in format like "IPI: 123456789" or similar patterns
-  // Look for patterns that match names with IPI numbers
-  
-  // Pattern 1: Look for IPI number patterns (usually 9-11 digits)
-  const ipiPattern = /(?:IPI[:\s#]*)?(\d{9,11})/gi;
-  
-  // Pattern 2: Look for name patterns followed by IPI
-  const nameIpiPattern = /([A-Z][A-Z\s,.'()-]+?)(?:\s*[-|]\s*|\s+)(?:IPI[:\s#]*)?(\d{9,11})/gi;
-  
-  // Pattern 3: Table row pattern (common in ASCAP results)
-  const tableRowPattern = /\|?\s*([^|]+?)\s*\|?\s*(\d{9,11})\s*\|?/g;
-  
-  let match;
   const seen = new Set<string>();
   
-  // Try name-IPI pattern first
-  while ((match = nameIpiPattern.exec(markdown)) !== null) {
-    const name = match[1].trim();
-    const ipi = match[2];
-    const key = `${name}-${ipi}`;
-    
-    if (!seen.has(key) && name.length > 1 && name.length < 100) {
-      seen.add(key);
-      results.push({
-        name: formatName(name),
-        ipiNumber: ipi,
-        type: searchType as 'writer' | 'publisher' | 'performer'
-      });
-    }
-  }
+  // Try to parse from HTML first - look for table rows with IPI data
+  // ASCAP typically shows results in a table with columns: Name, IPI#, etc.
   
-  // Try table row pattern
-  while ((match = tableRowPattern.exec(markdown)) !== null) {
+  // Pattern for IPI numbers (9-11 digits)
+  const ipiRegex = /\b(\d{9,11})\b/g;
+  
+  // Try to find IPI numbers with associated names from the HTML
+  // Look for patterns like: <td>Name</td>...<td>123456789</td>
+  const tableRowPattern = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>(\d{9,11})<\/td>[\s\S]*?<\/tr>/gi;
+  let match;
+  
+  while ((match = tableRowPattern.exec(html)) !== null) {
     const name = match[1].trim();
     const ipi = match[2];
-    const key = `${name}-${ipi}`;
+    const key = `${ipi}`;
     
     if (!seen.has(key) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/)) {
       seen.add(key);
@@ -157,27 +138,64 @@ function parseASCAPResults(markdown: string, searchType: string): SearchResult[]
     }
   }
   
-  // If no structured results found, extract any IPI numbers with nearby text
+  // Also try markdown patterns
+  // Pattern: Name followed by IPI number
+  const mdNameIpiPattern = /([A-Z][A-Za-z\s,.'()-]+?)\s*[|\-–]\s*(\d{9,11})/g;
+  
+  while ((match = mdNameIpiPattern.exec(markdown)) !== null) {
+    const name = match[1].trim();
+    const ipi = match[2];
+    const key = `${ipi}`;
+    
+    if (!seen.has(key) && name.length > 1 && name.length < 100) {
+      seen.add(key);
+      results.push({
+        name: formatName(name),
+        ipiNumber: ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer'
+      });
+    }
+  }
+  
+  // Try table-like markdown (pipes)
+  const tablePattern = /\|\s*([^|]+?)\s*\|\s*(\d{9,11})\s*\|/g;
+  
+  while ((match = tablePattern.exec(markdown)) !== null) {
+    const name = match[1].trim();
+    const ipi = match[2];
+    const key = `${ipi}`;
+    
+    if (!seen.has(key) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/) && !name.match(/^IPI/i)) {
+      seen.add(key);
+      results.push({
+        name: formatName(name),
+        ipiNumber: ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer'
+      });
+    }
+  }
+  
+  // Fallback: Look for any IPI numbers and try to find nearby names
   if (results.length === 0) {
     const lines = markdown.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const ipiMatch = line.match(/(\d{9,11})/);
       if (ipiMatch) {
-        // Look for a name in the same line or nearby lines
+        // Look for a name in the same line or previous line
         let name = '';
-        const nameMatch = line.match(/([A-Z][a-zA-Z\s,.'()-]+)/);
-        if (nameMatch && nameMatch[1].trim().length > 2) {
+        const nameMatch = line.match(/([A-Z][a-zA-Z\s,.'()-]{2,50})/);
+        if (nameMatch && !nameMatch[1].match(/^\d/)) {
           name = nameMatch[1].trim();
         } else if (i > 0) {
-          const prevNameMatch = lines[i-1].match(/([A-Z][a-zA-Z\s,.'()-]+)/);
-          if (prevNameMatch) {
+          const prevNameMatch = lines[i-1].match(/([A-Z][a-zA-Z\s,.'()-]{2,50})/);
+          if (prevNameMatch && !prevNameMatch[1].match(/^\d/)) {
             name = prevNameMatch[1].trim();
           }
         }
         
-        if (name && name.length < 100) {
-          const key = `${name}-${ipiMatch[1]}`;
+        if (name && name.length > 2 && name.length < 100) {
+          const key = `${ipiMatch[1]}`;
           if (!seen.has(key)) {
             seen.add(key);
             results.push({
