@@ -78,28 +78,27 @@ serve(async (req) => {
         actions: [
           { type: 'wait', milliseconds: 3000 },
           // Click "I Agree" button using JavaScript - more reliable than CSS selector
-          { 
-            type: 'executeJavascript', 
-            script: `
+          {
+            type: 'executeJavascript',
+            script: `(() => {
               const buttons = document.querySelectorAll('button, a, span');
               for (const btn of buttons) {
                 if (btn.textContent && btn.textContent.trim() === 'I Agree') {
                   btn.click();
-                  break;
+                  return 'clicked';
                 }
               }
-              return 'clicked';
-            `
+              return 'not_found';
+            })();`
           },
           { type: 'wait', milliseconds: 6000 },
-          // Extract search results using JavaScript
           {
             type: 'executeJavascript',
-            script: `
+            script: `(() => {
               const results = [];
               // Look for table rows or list items containing IPI data
               const rows = document.querySelectorAll('tr, .result-row, [class*="result"]');
-              rows.forEach(row => {
+              rows.forEach((row) => {
                 const text = row.textContent || '';
                 // Look for IPI numbers (9-11 digits)
                 const ipiMatch = text.match(/(\\d{9,11})/);
@@ -121,7 +120,7 @@ serve(async (req) => {
                 }
               });
               return JSON.stringify(results);
-            `
+            })();`
           }
         ],
       }),
