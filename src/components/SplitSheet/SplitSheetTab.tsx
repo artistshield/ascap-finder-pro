@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Users, Building2, Send, FileDown } from 'lucide-react';
+import { Plus, Users, Building2, Send, FileDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SongInfoForm } from './SongInfoForm';
@@ -7,6 +7,7 @@ import { WriterCard } from './WriterCard';
 import { ShareSummary } from './ShareSummary';
 import { SongInfo, Writer } from './types';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 const createEmptyWriter = (): Writer => ({
   id: crypto.randomUUID(),
@@ -29,6 +30,7 @@ const createEmptySongInfo = (): SongInfo => ({
 export const SplitSheetTab = () => {
   const [songInfo, setSongInfo] = useState<SongInfo>(createEmptySongInfo());
   const [writers, setWriters] = useState<Writer[]>([createEmptyWriter()]);
+  const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
 
   const addWriter = () => {
@@ -59,7 +61,7 @@ export const SplitSheetTab = () => {
   const grandTotal = writersTotal + publishersTotal;
   const isValid = Math.abs(grandTotal - 100) < 0.01;
 
-  const handleSendForSignature = () => {
+  const handleSendForSignature = async () => {
     if (!songInfo.title) {
       toast({ title: 'Missing Info', description: 'Please enter a song title', variant: 'destructive' });
       return;
@@ -78,10 +80,28 @@ export const SplitSheetTab = () => {
       return;
     }
     
-    toast({ 
-      title: 'Split Sheet Ready', 
-      description: `Would send to ${recipientCount} recipient(s). Email integration coming soon!` 
-    });
+    setIsSending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-splitsheet', {
+        body: { songInfo, writers }
+      });
+      
+      if (error) throw error;
+      
+      toast({ 
+        title: 'Split Sheet Sent!', 
+        description: `Successfully sent to ${data.sent} recipient(s)` 
+      });
+    } catch (error: any) {
+      console.error('Error sending split sheet:', error);
+      toast({ 
+        title: 'Error', 
+        description: error.message || 'Failed to send split sheet', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleExportPDF = () => {
@@ -173,11 +193,15 @@ export const SplitSheetTab = () => {
             <div className="flex flex-col gap-2">
               <Button 
                 onClick={handleSendForSignature} 
-                disabled={!isValid || getRecipientCount() === 0}
+                disabled={!isValid || getRecipientCount() === 0 || isSending}
                 className="w-full gradient-purple"
               >
-                <Send className="h-4 w-4 mr-2" />
-                Send for Signature
+                {isSending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4 mr-2" />
+                )}
+                {isSending ? 'Sending...' : 'Send for Signature'}
               </Button>
               <Button 
                 onClick={handleExportPDF} 
