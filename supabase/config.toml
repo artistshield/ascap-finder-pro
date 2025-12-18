@@ -2,3 +2,6 @@ project_id = "jdmecjxceyvtolbxtvdi"
 
 [functions.ascap-search]
 verify_jwt = false
+
+[functions.send-splitsheet]
+verify_jwt = false
