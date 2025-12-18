@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Pen, Building2, Mic2, Save, Download } from 'lucide-react';
+import { Pen, Building2, Mic2, Save, Download, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchSection } from '@/components/SearchSection';
 import { ResultsTable } from '@/components/ResultsTable';
 import { SavedIPIsSection } from '@/components/SavedIPIsSection';
+import { SplitSheetTab } from '@/components/SplitSheet/SplitSheetTab';
 import { SearchResult } from '@/lib/api/ascap';
 import { useSavedIPIs } from '@/hooks/useSavedIPIs';
 import { exportToCSV, exportToJSON } from '@/lib/export';
@@ -117,7 +118,7 @@ const Index = () => {
         {/* Results Section */}
         <section>
           <Tabs defaultValue="results" className="w-full">
-            <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsList className="grid w-full max-w-lg grid-cols-3">
               <TabsTrigger value="results">
                 Search Results
                 {allResults.length > 0 && (
@@ -125,6 +126,10 @@ const Index = () => {
                 )}
               </TabsTrigger>
               <TabsTrigger value="saved">My Collection</TabsTrigger>
+              <TabsTrigger value="splitsheet" className="flex items-center gap-1">
+                <FileText className="h-3 w-3" />
+                Split Sheet
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="results" className="mt-4">
               <ResultsTable
@@ -135,6 +140,9 @@ const Index = () => {
             </TabsContent>
             <TabsContent value="saved" className="mt-4">
               <SavedIPIsSection />
+            </TabsContent>
+            <TabsContent value="splitsheet" className="mt-4">
+              <SplitSheetTab />
             </TabsContent>
           </Tabs>
         </section>
