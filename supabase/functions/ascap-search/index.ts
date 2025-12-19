@@ -10,6 +10,7 @@ interface SearchResult {
   name: string;
   ipiNumber: string;
   type: 'writer' | 'publisher' | 'performer';
+  pro: string;
 }
 
 serve(async (req) => {
@@ -219,7 +220,8 @@ function parseASCAPResults(
       results.push({
         name: formatName(item.name),
         ipiNumber: item.ipi,
-        type: searchType as 'writer' | 'publisher' | 'performer'
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'ASCAP'
       });
     }
   }
@@ -250,7 +252,8 @@ function parseASCAPResults(
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
-        type: searchType as 'writer' | 'publisher' | 'performer'
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'ASCAP'
       });
     }
   }
@@ -269,7 +272,8 @@ function parseASCAPResults(
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
-        type: searchType as 'writer' | 'publisher' | 'performer'
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'ASCAP'
       });
     }
   }
@@ -287,7 +291,8 @@ function parseASCAPResults(
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
-        type: searchType as 'writer' | 'publisher' | 'performer'
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'ASCAP'
       });
     }
   }
@@ -318,7 +323,8 @@ function parseASCAPResults(
             results.push({
               name: formatName(name),
               ipiNumber: ipiMatch[1],
-              type: searchType as 'writer' | 'publisher' | 'performer'
+              type: searchType as 'writer' | 'publisher' | 'performer',
+              pro: 'ASCAP'
             });
           }
         }

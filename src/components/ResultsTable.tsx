@@ -64,6 +64,7 @@ export function ResultsTable({ results, selectedIds, onSelectionChange }: Result
             </TableHead>
             <TableHead>Name</TableHead>
             <TableHead>IPI Number</TableHead>
+            <TableHead>PRO</TableHead>
             <TableHead>Type</TableHead>
           </TableRow>
         </TableHeader>
@@ -88,6 +89,11 @@ export function ResultsTable({ results, selectedIds, onSelectionChange }: Result
                   <code className="px-2 py-1 rounded bg-muted text-sm font-mono">
                     {result.ipiNumber}
                   </code>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary" className="font-medium">
+                    {result.pro || 'ASCAP'}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={typeColors[result.type]}>

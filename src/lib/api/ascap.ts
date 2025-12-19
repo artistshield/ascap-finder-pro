@@ -4,6 +4,7 @@ export interface SearchResult {
   name: string;
   ipiNumber: string;
   type: 'writer' | 'publisher' | 'performer';
+  pro: string;
 }
 
 export interface ASCAPSearchResponse {

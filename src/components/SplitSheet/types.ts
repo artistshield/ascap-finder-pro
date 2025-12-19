@@ -40,8 +40,8 @@ export const PRO_OPTIONS = [
 
 export const ROLE_OPTIONS = [
   'Composer',
-  'Lyricist',
-  'Composer/Lyricist',
+  'Author',
+  'Composer/Author',
   'Arranger',
   'Producer',
   'Co-Writer'
