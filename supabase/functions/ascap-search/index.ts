@@ -99,16 +99,20 @@ serve(async (req) => {
 
       const searchName = realName || query;
       
-      // Search ASCAP writers with the real name (or stage name as fallback)
-      const writerResults = await searchASCAPWriters(searchName, apiKey);
+      // Search both ASCAP and BMI writers with the real name (or stage name as fallback)
+      const [ascapResults, bmiResults] = await Promise.all([
+        searchASCAPWriters(searchName, apiKey),
+        searchBMIWriters(searchName, apiKey)
+      ]);
       
-      // Mark results as performer type
-      const performerResults = writerResults.map(r => ({
+      // Combine results, mark as performer type
+      const allResults = [...ascapResults, ...bmiResults];
+      const performerResults = allResults.map(r => ({
         ...r,
         type: 'performer' as const
       }));
 
-      console.log(`Found ${performerResults.length} results for performer: ${query} (searched as: ${searchName})`);
+      console.log(`Found ${performerResults.length} results for performer: ${query} (ASCAP: ${ascapResults.length}, BMI: ${bmiResults.length}, searched as: ${searchName})`);
 
       return new Response(
         JSON.stringify({ success: true, results: performerResults, realName: searchName, source: realName ? 'wikipedia' : 'stagename' }),
@@ -116,138 +120,31 @@ serve(async (req) => {
       );
     }
 
-    // For writer and publisher searches, use ASCAP directly
-    const encodedQuery = encodeURIComponent(query);
-    let searchUrl = `https://www.ascap.com/repertory#/ace/search/`;
+    // For writer and publisher searches, search both ASCAP and BMI
+    console.log(`Searching ${searchType} in both ASCAP and BMI for: ${query}`);
     
-    switch (searchType) {
-      case 'writer':
-        searchUrl += `writer/${encodedQuery}`;
-        break;
-      case 'publisher':
-        searchUrl += `publisher/${encodedQuery}`;
-        break;
-      default:
-        searchUrl += `workID/${encodedQuery}`;
-    }
-
-    console.log('Scraping ASCAP URL:', searchUrl);
-
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: searchUrl,
-        formats: ['markdown', 'html'],
-        onlyMainContent: false,
-        waitFor: 5000,
-        blockAds: false,
-        proxy: 'stealth',
-        actions: [
-          { type: 'wait', milliseconds: 3000 },
-          {
-            type: 'executeJavascript',
-            script: `(() => {
-              const buttons = document.querySelectorAll('button, a, span');
-              for (const btn of buttons) {
-                if (btn.textContent && btn.textContent.trim() === 'I Agree') {
-                  btn.click();
-                  return 'clicked';
-                }
-              }
-              return 'not_found';
-            })();`
-          },
-          { type: 'wait', milliseconds: 6000 },
-          {
-            type: 'executeJavascript',
-            script: `(() => {
-              const results = [];
-              const seen = new Set();
-              
-              const allElements = document.querySelectorAll('*');
-              allElements.forEach((el) => {
-                const text = el.textContent || '';
-                const ipiMatch = text.match(/(\\d{9,11})/);
-                if (ipiMatch && !seen.has(ipiMatch[1])) {
-                  if (el.children.length < 10 && text.length < 200) {
-                    const fullText = text.toLowerCase();
-                    const ipiIndex = fullText.indexOf('ipi');
-                    
-                    if (ipiIndex > 0) {
-                      let nameText = text.substring(0, ipiIndex).trim();
-                      nameText = nameText.replace(/^[\\d\\s\\-]+of[\\s\\d]+results?/i, '').trim();
-                      nameText = nameText.replace(/^results?/i, '').trim();
-                      
-                      if (nameText && nameText.length > 1 && nameText.length < 80 && !nameText.match(/^\\d+$/)) {
-                        seen.add(ipiMatch[1]);
-                        results.push({ name: nameText, ipi: ipiMatch[1] });
-                      }
-                    }
-                  }
-                }
-              });
-              
-              if (results.length === 0) {
-                const links = document.querySelectorAll('a[href*="ace"], .writer-name, .publisher-name, .performer-name, [class*="name"]');
-                links.forEach((link) => {
-                  const nameText = link.textContent?.trim();
-                  const parent = link.closest('tr, div, li, [class*="result"]');
-                  if (parent && nameText) {
-                    const parentText = parent.textContent || '';
-                    const ipiMatch = parentText.match(/(\\d{9,11})/);
-                    if (ipiMatch && !seen.has(ipiMatch[1]) && nameText.length > 1 && nameText.length < 80) {
-                      seen.add(ipiMatch[1]);
-                      results.push({ name: nameText, ipi: ipiMatch[1] });
-                    }
-                  }
-                });
-              }
-              
-              return JSON.stringify(results);
-            })();`
-          }
-        ],
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Firecrawl API error:', data);
-      return new Response(
-        JSON.stringify({ success: false, error: data.error || `Scraping failed` }),
-        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const markdown = data.data?.markdown || data.markdown || '';
-    const html = data.data?.html || data.html || '';
+    let ascapResults: SearchResult[] = [];
+    let bmiResults: SearchResult[] = [];
     
-    const jsReturns = data.data?.actions?.javascriptReturns || [];
-    let jsExtractedResults: Array<{name: string, ipi: string}> = [];
-    
-    if (jsReturns.length > 1 && jsReturns[1]?.value) {
-      try {
-        jsExtractedResults = JSON.parse(jsReturns[1].value);
-        console.log('JS extracted results:', jsExtractedResults);
-      } catch (e) {
-        console.log('Failed to parse JS results:', jsReturns[1]?.value);
-      }
+    if (searchType === 'writer') {
+      [ascapResults, bmiResults] = await Promise.all([
+        searchASCAPWriters(query, apiKey),
+        searchBMIWriters(query, apiKey)
+      ]);
+    } else if (searchType === 'publisher') {
+      [ascapResults, bmiResults] = await Promise.all([
+        searchASCAPPublishers(query, apiKey),
+        searchBMIPublishers(query, apiKey)
+      ]);
     }
     
-    console.log('HTML preview (first 2000 chars):', html.substring(0, 2000));
-    console.log('Markdown preview (first 1500 chars):', markdown.substring(0, 1500));
-
-    const results = parseASCAPResults(markdown, html, searchType, jsExtractedResults);
-
-    console.log(`Found ${results.length} results for ${searchType}: ${query}`);
+    // Combine results from both PROs
+    const allResults = [...ascapResults, ...bmiResults];
+    
+    console.log(`Found ${allResults.length} total results for ${searchType}: ${query} (ASCAP: ${ascapResults.length}, BMI: ${bmiResults.length})`);
 
     return new Response(
-      JSON.stringify({ success: true, results, rawContent: data.data?.markdown || data.markdown }),
+      JSON.stringify({ success: true, results: allResults }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
@@ -263,53 +160,85 @@ serve(async (req) => {
 function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
   const stageNameLower = stageName.toLowerCase();
   
-  // Wikipedia typically has the real name in the first paragraph
-  // Patterns like: "Calvin Cordozar Broadus Jr. (born October 20, 1971), known professionally as Snoop Dogg"
-  // Or: "Snoop Dogg (born Calvin Cordozar Broadus Jr.; October 20, 1971)"
+  console.log('Extracting real name from Wikipedia for:', stageName);
   
-  const patterns = [
-    // "Real Name (born Date), known professionally as Stage Name"
-    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\s*\(born/i,
-    // "Stage Name (born Real Name; Date)"
-    new RegExp(`${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z]\\.?\\s*)?[A-Z][a-z]+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV)?)?)`, 'i'),
-    // "Real Name, known professionally as Stage Name"
-    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?),?\s*(?:known (?:professionally|as)|better known as|stage name)/i,
-    // "born Real Name" pattern
-    /born\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
-    // "birth name Real Name"
-    /birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
-    // "né/née Real Name"
-    /n[ée]+\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+  // Look for "Born" line pattern first - this is the most reliable
+  // Wikipedia infobox typically has: "Born: Calvin Cordozar Broadus Jr."
+  const bornLinePatterns = [
+    // "Born Calvin Cordozar Broadus Jr." or "Born: Calvin..."
+    /\bBorn[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
+    // "|Born|Name" in table format
+    /\|\s*Born\s*\|\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
+    // "born Name" with full name following
+    /born\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)*(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
   ];
   
-  for (const pattern of patterns) {
+  for (const pattern of bornLinePatterns) {
     const match = wikiMarkdown.match(pattern);
     if (match && match[1]) {
-      const potentialName = match[1].trim();
-      // Validate it's a real name (at least 2 parts, not the stage name)
-      if (potentialName.split(/\s+/).length >= 2 && 
+      let potentialName = match[1].trim();
+      // Clean up - remove dates that might be captured
+      potentialName = potentialName.replace(/\s*\(?\d{1,2}[,\s]+\d{4}\)?.*$/i, '').trim();
+      potentialName = potentialName.replace(/\s*\d{4}.*$/i, '').trim();
+      // Remove trailing punctuation
+      potentialName = potentialName.replace(/[,;]$/, '').trim();
+      
+      console.log(`Born pattern matched: "${potentialName}"`);
+      
+      // Validate: at least 2 words, not the stage name, reasonable length
+      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 2 && 
           !potentialName.toLowerCase().includes(stageNameLower) &&
           potentialName.length > 5 &&
-          potentialName.length < 50) {
+          potentialName.length < 60) {
+        console.log(`Found real name via Born pattern: ${potentialName}`);
         return potentialName;
       }
     }
   }
   
-  // Try to find name in the first few sentences
-  const firstParagraph = wikiMarkdown.split('\n').slice(0, 10).join(' ');
+  // Try patterns in first paragraph for intro sentence
+  const firstParagraph = wikiMarkdown.split('\n').slice(0, 15).join(' ');
   
-  // Look for pattern: "Full Name (born/née"
-  const introMatch = firstParagraph.match(/^\*?\*?([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\*?\*?\s*\(/);
-  if (introMatch && introMatch[1]) {
-    const name = introMatch[1].trim();
-    if (name.split(/\s+/).length >= 2 && 
-        !name.toLowerCase().includes(stageNameLower) &&
-        name.length > 5) {
+  // Pattern: "Stage Name (born Real Name; Date)" or "Stage Name (born Real Name, Date)"
+  const stageNameEscaped = stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const introPatterns = [
+    new RegExp(`${stageNameEscaped}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]*\\.?)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`, 'i'),
+    // "Real Name, known professionally as Stage Name"
+    /^[*\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[*\s]*,?\s*(?:\(|known|better known|professionally)/i,
+  ];
+  
+  for (const pattern of introPatterns) {
+    const match = firstParagraph.match(pattern);
+    if (match && match[1]) {
+      let potentialName = match[1].trim();
+      potentialName = potentialName.replace(/[,;]$/, '').trim();
+      
+      console.log(`Intro pattern matched: "${potentialName}"`);
+      
+      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 2 && 
+          !potentialName.toLowerCase().includes(stageNameLower) &&
+          potentialName.length > 5 &&
+          potentialName.length < 60) {
+        console.log(`Found real name via intro pattern: ${potentialName}`);
+        return potentialName;
+      }
+    }
+  }
+  
+  // Try birth name pattern
+  const birthNameMatch = wikiMarkdown.match(/birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  if (birthNameMatch && birthNameMatch[1]) {
+    const name = birthNameMatch[1].trim().replace(/[,;]$/, '');
+    const words = name.split(/\s+/).filter(w => w.length > 0);
+    if (words.length >= 2 && !name.toLowerCase().includes(stageNameLower)) {
+      console.log(`Found real name via birth name pattern: ${name}`);
       return name;
     }
   }
   
+  console.log('No real name found in Wikipedia content');
   return null;
 }
 
@@ -466,6 +395,385 @@ async function searchASCAPWriters(name: string, apiKey: string): Promise<SearchR
   }
 
   return parseASCAPResults(markdown, html, 'writer', jsExtractedResults);
+}
+
+async function searchASCAPPublishers(name: string, apiKey: string): Promise<SearchResult[]> {
+  const encodedQuery = encodeURIComponent(name);
+  const searchUrl = `https://www.ascap.com/repertory#/ace/search/publisher/${encodedQuery}`;
+  
+  console.log('Searching ASCAP publishers for:', name);
+
+  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url: searchUrl,
+      formats: ['markdown', 'html'],
+      onlyMainContent: false,
+      waitFor: 5000,
+      blockAds: false,
+      proxy: 'stealth',
+      actions: [
+        { type: 'wait', milliseconds: 3000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            const buttons = document.querySelectorAll('button, a, span');
+            for (const btn of buttons) {
+              if (btn.textContent && btn.textContent.trim() === 'I Agree') {
+                btn.click();
+                return 'clicked';
+              }
+            }
+            return 'not_found';
+          })();`
+        },
+        { type: 'wait', milliseconds: 6000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            const results = [];
+            const seen = new Set();
+            
+            const allElements = document.querySelectorAll('*');
+            allElements.forEach((el) => {
+              const text = el.textContent || '';
+              const ipiMatch = text.match(/(\\d{9,11})/);
+              if (ipiMatch && !seen.has(ipiMatch[1])) {
+                if (el.children.length < 10 && text.length < 200) {
+                  const fullText = text.toLowerCase();
+                  const ipiIndex = fullText.indexOf('ipi');
+                  
+                  if (ipiIndex > 0) {
+                    let nameText = text.substring(0, ipiIndex).trim();
+                    nameText = nameText.replace(/^[\\d\\s\\-]+of[\\s\\d]+results?/i, '').trim();
+                    nameText = nameText.replace(/^results?/i, '').trim();
+                    
+                    if (nameText && nameText.length > 1 && nameText.length < 80 && !nameText.match(/^\\d+$/)) {
+                      seen.add(ipiMatch[1]);
+                      results.push({ name: nameText, ipi: ipiMatch[1] });
+                    }
+                  }
+                }
+              }
+            });
+            
+            return JSON.stringify(results);
+          })();`
+        }
+      ],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Firecrawl API error searching ASCAP publishers:', data);
+    return [];
+  }
+
+  const markdown = data.data?.markdown || data.markdown || '';
+  const html = data.data?.html || data.html || '';
+  
+  const jsReturns = data.data?.actions?.javascriptReturns || [];
+  let jsExtractedResults: Array<{name: string, ipi: string}> = [];
+  
+  if (jsReturns.length > 1 && jsReturns[1]?.value) {
+    try {
+      jsExtractedResults = JSON.parse(jsReturns[1].value);
+      console.log('JS extracted ASCAP publisher results:', jsExtractedResults);
+    } catch (e) {
+      console.log('Failed to parse JS ASCAP publisher results');
+    }
+  }
+
+  return parseASCAPResults(markdown, html, 'publisher', jsExtractedResults);
+}
+
+async function searchBMIWriters(name: string, apiKey: string): Promise<SearchResult[]> {
+  const encodedQuery = encodeURIComponent(name);
+  const searchUrl = `https://repertoire.bmi.com/Search/Search?Main_Search_Text=${encodedQuery}&Main_Search=Writer+%2F+Composer&Search_Type=all`;
+  
+  console.log('Searching BMI writers for:', name);
+
+  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url: searchUrl,
+      formats: ['markdown', 'html'],
+      onlyMainContent: false,
+      waitFor: 5000,
+      proxy: 'stealth',
+      actions: [
+        { type: 'wait', milliseconds: 2000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            // Click Accept button for disclaimer
+            const acceptBtn = document.querySelector('button.btn-primary, button:contains("Accept"), a:contains("Accept")');
+            if (acceptBtn) {
+              acceptBtn.click();
+              return 'clicked_accept';
+            }
+            // Also try finding by text content
+            const buttons = document.querySelectorAll('button, a');
+            for (const btn of buttons) {
+              if (btn.textContent && btn.textContent.trim() === 'Accept') {
+                btn.click();
+                return 'clicked';
+              }
+            }
+            return 'not_found';
+          })();`
+        },
+        { type: 'wait', milliseconds: 4000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            const results = [];
+            const seen = new Set();
+            
+            // BMI format: Look for writer names with IPI numbers
+            // They typically show: "WRITER NAME" and "IPI: 123456789"
+            const rows = document.querySelectorAll('tr, .search-result, [class*="result"], div[class*="row"]');
+            rows.forEach((row) => {
+              const text = row.textContent || '';
+              const ipiMatch = text.match(/IPI[:#\\s]*([\\d]{9,11})/i) || text.match(/(\\d{9,11})/);
+              if (ipiMatch) {
+                // Try to find the name - usually in a link or heading
+                const nameEl = row.querySelector('a[href*="Detailed"], a[href*="writer"], h3, h4, .name, strong');
+                let nameText = nameEl ? nameEl.textContent?.trim() : '';
+                
+                if (!nameText) {
+                  // Try to extract name before IPI
+                  const beforeIPI = text.split(/IPI/i)[0];
+                  const nameMatch = beforeIPI.match(/([A-Z][A-Z\\s,.'()-]+)/);
+                  if (nameMatch) nameText = nameMatch[1].trim();
+                }
+                
+                if (nameText && !seen.has(ipiMatch[1]) && nameText.length > 2 && nameText.length < 80) {
+                  seen.add(ipiMatch[1]);
+                  results.push({ name: nameText, ipi: ipiMatch[1] });
+                }
+              }
+            });
+            
+            // Also try parsing the page content more broadly
+            if (results.length === 0) {
+              const content = document.body.textContent || '';
+              const ipiPattern = /([A-Z][A-Za-z\\s,.'()-]+?)\\s*IPI[:#\\s]*([\\d]{9,11})/gi;
+              let match;
+              while ((match = ipiPattern.exec(content)) !== null) {
+                const name = match[1].trim();
+                const ipi = match[2];
+                if (!seen.has(ipi) && name.length > 2 && name.length < 80) {
+                  seen.add(ipi);
+                  results.push({ name, ipi });
+                }
+              }
+            }
+            
+            return JSON.stringify(results);
+          })();`
+        }
+      ],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Firecrawl API error searching BMI writers:', data);
+    return [];
+  }
+
+  const markdown = data.data?.markdown || data.markdown || '';
+  const html = data.data?.html || data.html || '';
+  
+  console.log('BMI HTML preview:', html.substring(0, 1500));
+  console.log('BMI Markdown preview:', markdown.substring(0, 1000));
+  
+  const jsReturns = data.data?.actions?.javascriptReturns || [];
+  let jsExtractedResults: Array<{name: string, ipi: string}> = [];
+  
+  if (jsReturns.length > 1 && jsReturns[1]?.value) {
+    try {
+      jsExtractedResults = JSON.parse(jsReturns[1].value);
+      console.log('BMI JS extracted results:', jsExtractedResults);
+    } catch (e) {
+      console.log('Failed to parse BMI JS results');
+    }
+  }
+
+  // Parse BMI results
+  return parseBMIResults(markdown, html, 'writer', jsExtractedResults);
+}
+
+async function searchBMIPublishers(name: string, apiKey: string): Promise<SearchResult[]> {
+  const encodedQuery = encodeURIComponent(name);
+  const searchUrl = `https://repertoire.bmi.com/Search/Search?Main_Search_Text=${encodedQuery}&Main_Search=Publisher&Search_Type=all`;
+  
+  console.log('Searching BMI publishers for:', name);
+
+  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      url: searchUrl,
+      formats: ['markdown', 'html'],
+      onlyMainContent: false,
+      waitFor: 5000,
+      proxy: 'stealth',
+      actions: [
+        { type: 'wait', milliseconds: 2000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            const buttons = document.querySelectorAll('button, a');
+            for (const btn of buttons) {
+              if (btn.textContent && btn.textContent.trim() === 'Accept') {
+                btn.click();
+                return 'clicked';
+              }
+            }
+            return 'not_found';
+          })();`
+        },
+        { type: 'wait', milliseconds: 4000 },
+        {
+          type: 'executeJavascript',
+          script: `(() => {
+            const results = [];
+            const seen = new Set();
+            
+            const rows = document.querySelectorAll('tr, .search-result, [class*="result"]');
+            rows.forEach((row) => {
+              const text = row.textContent || '';
+              const ipiMatch = text.match(/IPI[:#\\s]*([\\d]{9,11})/i) || text.match(/(\\d{9,11})/);
+              if (ipiMatch) {
+                const nameEl = row.querySelector('a[href*="Detailed"], a[href*="publisher"], h3, h4, .name, strong');
+                let nameText = nameEl ? nameEl.textContent?.trim() : '';
+                
+                if (!nameText) {
+                  const beforeIPI = text.split(/IPI/i)[0];
+                  const nameMatch = beforeIPI.match(/([A-Z][A-Z\\s,.'()-]+)/);
+                  if (nameMatch) nameText = nameMatch[1].trim();
+                }
+                
+                if (nameText && !seen.has(ipiMatch[1]) && nameText.length > 2 && nameText.length < 80) {
+                  seen.add(ipiMatch[1]);
+                  results.push({ name: nameText, ipi: ipiMatch[1] });
+                }
+              }
+            });
+            
+            return JSON.stringify(results);
+          })();`
+        }
+      ],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Firecrawl API error searching BMI publishers:', data);
+    return [];
+  }
+
+  const markdown = data.data?.markdown || data.markdown || '';
+  const html = data.data?.html || data.html || '';
+  
+  const jsReturns = data.data?.actions?.javascriptReturns || [];
+  let jsExtractedResults: Array<{name: string, ipi: string}> = [];
+  
+  if (jsReturns.length > 1 && jsReturns[1]?.value) {
+    try {
+      jsExtractedResults = JSON.parse(jsReturns[1].value);
+      console.log('BMI publisher JS extracted results:', jsExtractedResults);
+    } catch (e) {
+      console.log('Failed to parse BMI publisher JS results');
+    }
+  }
+
+  return parseBMIResults(markdown, html, 'publisher', jsExtractedResults);
+}
+
+function parseBMIResults(
+  markdown: string, 
+  html: string, 
+  searchType: string,
+  jsExtracted: Array<{name: string, ipi: string}> = []
+): SearchResult[] {
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+  
+  // First use JS extracted results
+  for (const item of jsExtracted) {
+    if (item.ipi && item.name && !seen.has(item.ipi)) {
+      seen.add(item.ipi);
+      results.push({
+        name: formatName(item.name),
+        ipiNumber: item.ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'BMI'
+      });
+    }
+  }
+  
+  if (results.length > 0) {
+    return results.slice(0, 50);
+  }
+  
+  // Try to parse from markdown/html
+  // BMI format typically: Name IPI: 123456789
+  const ipiPattern = /([A-Z][A-Za-z\s,.'()-]+?)\s*IPI[:#\s]*(\d{9,11})/gi;
+  let match;
+  
+  while ((match = ipiPattern.exec(markdown)) !== null) {
+    const name = match[1].trim();
+    const ipi = match[2];
+    
+    if (!seen.has(ipi) && name.length > 2 && name.length < 80 && !name.match(/^\d+$/)) {
+      seen.add(ipi);
+      results.push({
+        name: formatName(name),
+        ipiNumber: ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'BMI'
+      });
+    }
+  }
+  
+  // Also try table pattern
+  const tablePattern = /\|\s*([^|]+?)\s*\|\s*(\d{9,11})\s*\|/g;
+  
+  while ((match = tablePattern.exec(markdown)) !== null) {
+    const name = match[1].trim();
+    const ipi = match[2];
+    
+    if (!seen.has(ipi) && name.length > 2 && name.length < 80 && !name.match(/^\d+$/) && !name.match(/^IPI/i)) {
+      seen.add(ipi);
+      results.push({
+        name: formatName(name),
+        ipiNumber: ipi,
+        type: searchType as 'writer' | 'publisher' | 'performer',
+        pro: 'BMI'
+      });
+    }
+  }
+  
+  return results.slice(0, 50);
 }
 
 function parseASCAPResults(
