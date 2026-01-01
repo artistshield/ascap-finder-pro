@@ -37,57 +37,69 @@ serve(async (req) => {
       );
     }
 
-    // For performer searches, first find the real name via web search
+    // For performer searches, use Wikipedia as primary source for real name
     if (searchType === 'performer') {
       console.log(`Searching for performer real name: ${query}`);
       
-      // Use Firecrawl search to find the performer's real name
-      const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `"${query}" real name birth name wikipedia`,
-          limit: 5,
-        }),
-      });
-
-      const searchData = await searchResponse.json();
-      console.log('Web search results:', JSON.stringify(searchData).substring(0, 2000));
-
-      // Extract real name from search results
-      let realName = extractRealName(query, searchData);
+      // PRIMARY: Scrape Wikipedia directly for the performer's real name
+      let realName: string | null = null;
       
-      if (!realName) {
-        // Try a more direct search
-        const altSearchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
+      try {
+        const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(query.replace(/\s+/g, '_'))}`;
+        console.log('Scraping Wikipedia:', wikiUrl);
+        
+        const wikiResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            query: `${query} singer rapper artist born legal name`,
-            limit: 5,
+            url: wikiUrl,
+            formats: ['markdown'],
+            onlyMainContent: true,
+            waitFor: 2000,
           }),
         });
+
+        const wikiData = await wikiResponse.json();
+        const wikiMarkdown = wikiData.data?.markdown || wikiData.markdown || '';
+        console.log('Wikipedia content preview:', wikiMarkdown.substring(0, 1500));
         
-        const altSearchData = await altSearchResponse.json();
-        console.log('Alt search results:', JSON.stringify(altSearchData).substring(0, 2000));
-        realName = extractRealName(query, altSearchData);
+        // Extract real name from Wikipedia content
+        realName = extractRealNameFromWikipedia(query, wikiMarkdown);
+        
+        if (realName) {
+          console.log(`Wikipedia: Found real name for ${query}: ${realName}`);
+        }
+      } catch (wikiError) {
+        console.log('Wikipedia scrape failed:', wikiError);
+      }
+      
+      // SECONDARY: If Wikipedia didn't work, try ASCAP repertory directly with stage name
+      if (!realName) {
+        console.log('Wikipedia lookup failed, trying ASCAP repertory as secondary method');
+        
+        // Try searching ASCAP with the stage name directly
+        const stageNameResults = await searchASCAPWriters(query, apiKey);
+        
+        if (stageNameResults.length > 0) {
+          console.log(`Found ${stageNameResults.length} results in ASCAP using stage name: ${query}`);
+          const performerResults = stageNameResults.map(r => ({
+            ...r,
+            type: 'performer' as const
+          }));
+          
+          return new Response(
+            JSON.stringify({ success: true, results: performerResults, realName: query, source: 'ascap-stagename' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
 
       const searchName = realName || query;
       
-      if (!realName) {
-        console.log('Could not find real name for performer, using stage name');
-      } else {
-        console.log(`Found real name for ${query}: ${realName}`);
-      }
-
-      // Now search ASCAP writers with the real name
+      // Search ASCAP writers with the real name (or stage name as fallback)
       const writerResults = await searchASCAPWriters(searchName, apiKey);
       
       // Mark results as performer type
@@ -99,7 +111,7 @@ serve(async (req) => {
       console.log(`Found ${performerResults.length} results for performer: ${query} (searched as: ${searchName})`);
 
       return new Response(
-        JSON.stringify({ success: true, results: performerResults, realName: searchName }),
+        JSON.stringify({ success: true, results: performerResults, realName: searchName, source: realName ? 'wikipedia' : 'stagename' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -247,6 +259,59 @@ serve(async (req) => {
     );
   }
 });
+
+function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
+  const stageNameLower = stageName.toLowerCase();
+  
+  // Wikipedia typically has the real name in the first paragraph
+  // Patterns like: "Calvin Cordozar Broadus Jr. (born October 20, 1971), known professionally as Snoop Dogg"
+  // Or: "Snoop Dogg (born Calvin Cordozar Broadus Jr.; October 20, 1971)"
+  
+  const patterns = [
+    // "Real Name (born Date), known professionally as Stage Name"
+    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\s*\(born/i,
+    // "Stage Name (born Real Name; Date)"
+    new RegExp(`${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z]\\.?\\s*)?[A-Z][a-z]+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV)?)?)`, 'i'),
+    // "Real Name, known professionally as Stage Name"
+    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?),?\s*(?:known (?:professionally|as)|better known as|stage name)/i,
+    // "born Real Name" pattern
+    /born\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+    // "birth name Real Name"
+    /birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+    // "né/née Real Name"
+    /n[ée]+\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = wikiMarkdown.match(pattern);
+    if (match && match[1]) {
+      const potentialName = match[1].trim();
+      // Validate it's a real name (at least 2 parts, not the stage name)
+      if (potentialName.split(/\s+/).length >= 2 && 
+          !potentialName.toLowerCase().includes(stageNameLower) &&
+          potentialName.length > 5 &&
+          potentialName.length < 50) {
+        return potentialName;
+      }
+    }
+  }
+  
+  // Try to find name in the first few sentences
+  const firstParagraph = wikiMarkdown.split('\n').slice(0, 10).join(' ');
+  
+  // Look for pattern: "Full Name (born/née"
+  const introMatch = firstParagraph.match(/^\*?\*?([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\*?\*?\s*\(/);
+  if (introMatch && introMatch[1]) {
+    const name = introMatch[1].trim();
+    if (name.split(/\s+/).length >= 2 && 
+        !name.toLowerCase().includes(stageNameLower) &&
+        name.length > 5) {
+      return name;
+    }
+  }
+  
+  return null;
+}
 
 function extractRealName(stageName: string, searchData: any): string | null {
   const results = searchData.data || searchData.results || [];
