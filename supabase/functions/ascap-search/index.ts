@@ -161,16 +161,45 @@ function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): 
   const stageNameLower = stageName.toLowerCase();
   
   console.log('Extracting real name from Wikipedia for:', stageName);
+  console.log('First 2000 chars of markdown:', wikiMarkdown.substring(0, 2000));
   
-  // Look for "Born" line pattern first - this is the most reliable
-  // Wikipedia infobox typically has: "Born: Calvin Cordozar Broadus Jr."
+  // Wikipedia table format: "| Born | Calvin Cordozar Broadus Jr.<br> (1971-10-20)"
+  // This is the most common format for artist pages
+  const tablePatterns = [
+    // Table format: "| Born | Name<br>" or "| Born | Name |"
+    /\|\s*Born\s*\|\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V))?)\s*(?:<br>|\||\()/i,
+    // "Born | Name" without leading pipe
+    /Born\s*\|\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V))?)\s*(?:<br>|\||\()/i,
+  ];
+  
+  for (const pattern of tablePatterns) {
+    const match = wikiMarkdown.match(pattern);
+    if (match && match[1]) {
+      let potentialName = match[1].trim();
+      // Clean up any trailing punctuation or dates
+      potentialName = potentialName.replace(/\s*\(?\d{1,2}[,\s]+\d{4}\)?.*$/i, '').trim();
+      potentialName = potentialName.replace(/\s*\d{4}.*$/i, '').trim();
+      potentialName = potentialName.replace(/[,;]$/, '').trim();
+      
+      console.log(`Table pattern matched: "${potentialName}"`);
+      
+      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 2 && 
+          !potentialName.toLowerCase().includes(stageNameLower) &&
+          potentialName.length > 5 &&
+          potentialName.length < 60) {
+        console.log(`Found real name via table pattern: ${potentialName}`);
+        return potentialName;
+      }
+    }
+  }
+  
+  // Look for "Born" line patterns - various formats
   const bornLinePatterns = [
     // "Born Calvin Cordozar Broadus Jr." or "Born: Calvin..."
-    /\bBorn[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
-    // "|Born|Name" in table format
-    /\|\s*Born\s*\|\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
+    /\bBorn[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
     // "born Name" with full name following
-    /born\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)*(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
+    /\bborn\s+([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)*(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
   ];
   
   for (const pattern of bornLinePatterns) {
@@ -180,7 +209,6 @@ function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): 
       // Clean up - remove dates that might be captured
       potentialName = potentialName.replace(/\s*\(?\d{1,2}[,\s]+\d{4}\)?.*$/i, '').trim();
       potentialName = potentialName.replace(/\s*\d{4}.*$/i, '').trim();
-      // Remove trailing punctuation
       potentialName = potentialName.replace(/[,;]$/, '').trim();
       
       console.log(`Born pattern matched: "${potentialName}"`);
@@ -198,14 +226,14 @@ function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): 
   }
   
   // Try patterns in first paragraph for intro sentence
-  const firstParagraph = wikiMarkdown.split('\n').slice(0, 15).join(' ');
+  const firstParagraph = wikiMarkdown.split('\n').slice(0, 30).join(' ');
   
   // Pattern: "Stage Name (born Real Name; Date)" or "Stage Name (born Real Name, Date)"
   const stageNameEscaped = stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const introPatterns = [
-    new RegExp(`${stageNameEscaped}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]*\\.?)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`, 'i'),
+    new RegExp(`${stageNameEscaped}[^(]*\\(born\\s+([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]*\\.?)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`, 'i'),
     // "Real Name, known professionally as Stage Name"
-    /^[*\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[*\s]*,?\s*(?:\(|known|better known|professionally)/i,
+    /^[*\s]*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[*\s]*,?\s*(?:\(|known|better known|professionally)/i,
   ];
   
   for (const pattern of introPatterns) {
@@ -228,7 +256,7 @@ function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): 
   }
   
   // Try birth name pattern
-  const birthNameMatch = wikiMarkdown.match(/birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  const birthNameMatch = wikiMarkdown.match(/birth\s*name[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
   if (birthNameMatch && birthNameMatch[1]) {
     const name = birthNameMatch[1].trim().replace(/[,;]$/, '');
     const words = name.split(/\s+/).filter(w => w.length > 0);
@@ -516,16 +544,11 @@ async function searchBMIWriters(name: string, apiKey: string): Promise<SearchRes
         {
           type: 'executeJavascript',
           script: `(() => {
-            // Click Accept button for disclaimer
-            const acceptBtn = document.querySelector('button.btn-primary, button:contains("Accept"), a:contains("Accept")');
-            if (acceptBtn) {
-              acceptBtn.click();
-              return 'clicked_accept';
-            }
-            // Also try finding by text content
-            const buttons = document.querySelectorAll('button, a');
+            // Click Accept button for disclaimer - use vanilla JS only
+            const buttons = document.querySelectorAll('button, a, .btn-primary');
             for (const btn of buttons) {
-              if (btn.textContent && btn.textContent.trim() === 'Accept') {
+              const text = (btn.textContent || '').trim().toLowerCase();
+              if (text === 'accept' || text === 'i accept' || text === 'agree') {
                 btn.click();
                 return 'clicked';
               }
