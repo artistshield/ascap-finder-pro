@@ -3,6 +3,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ascapApi, SearchResult } from '@/lib/api/ascap';
 import { useToast } from '@/hooks/use-toast';
 
@@ -11,12 +12,14 @@ interface SearchSectionProps {
   icon: React.ReactNode;
   results: SearchResult[];
   onResultsChange: (results: SearchResult[]) => void;
+  onSearchWriterName?: (name: string) => void;
 }
 
-export function SearchSection({ type, icon, results, onResultsChange }: SearchSectionProps) {
+export function SearchSection({ type, icon, results, onResultsChange, onSearchWriterName }: SearchSectionProps) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [performerRealName, setPerformerRealName] = useState<string | null>(null);
+  const [searchInWriters, setSearchInWriters] = useState(false);
   const { toast } = useToast();
 
   const handleSearch = async () => {
@@ -107,9 +110,28 @@ export function SearchSection({ type, icon, results, onResultsChange }: SearchSe
         </div>
 
         {type === 'performer' && performerRealName && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Real name: <span className="font-medium text-foreground">{performerRealName}</span>
-          </p>
+          <div className="mt-3 p-3 rounded-md bg-background/50 border border-border/50">
+            <p className="text-sm text-muted-foreground">
+              Real name: <span className="font-medium text-foreground">{performerRealName}</span>
+            </p>
+            {onSearchWriterName && (
+              <div className="flex items-center gap-2 mt-2">
+                <Checkbox
+                  id="search-writers"
+                  checked={searchInWriters}
+                  onCheckedChange={(checked) => {
+                    setSearchInWriters(!!checked);
+                    if (checked && performerRealName) {
+                      onSearchWriterName(performerRealName);
+                    }
+                  }}
+                />
+                <label htmlFor="search-writers" className="text-sm cursor-pointer">
+                  Search this name in Writers
+                </label>
+              </div>
+            )}
+          </div>
         )}
 
         {results.length > 0 && (
