@@ -61,7 +61,7 @@ const Index = () => {
                 <Mic2 className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">ASCAP IPI Search</h1>
+                <h1 className="text-xl font-bold tracking-tight">Publishing IPI Search</h1>
                 <p className="text-sm text-muted-foreground">Music Rights Database Explorer</p>
               </div>
             </div>
@@ -91,7 +91,7 @@ const Index = () => {
         <section>
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-            Search ASCAP Repertory
+            Search Publishing Repertories
           </h2>
           <div className="grid md:grid-cols-3 gap-4">
             <SearchSection
@@ -151,7 +151,7 @@ const Index = () => {
       {/* Footer */}
       <footer className="border-t border-border/50 py-6 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>Data sourced from ASCAP Repertory • For music industry research purposes</p>
+          <p>Data sourced from public PRO repertories • For music industry research purposes</p>
         </div>
       </footer>
     </div>

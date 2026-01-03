@@ -347,7 +347,6 @@ async function searchASCAPWriters(name: string, apiKey: string): Promise<SearchR
       onlyMainContent: false,
       waitFor: 5000,
       blockAds: false,
-      proxy: 'stealth',
       actions: [
         { type: 'wait', milliseconds: 3000 },
         {
@@ -437,14 +436,13 @@ async function searchASCAPPublishers(name: string, apiKey: string): Promise<Sear
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      url: searchUrl,
-      formats: ['markdown', 'html'],
-      onlyMainContent: false,
-      waitFor: 5000,
-      blockAds: false,
-      proxy: 'stealth',
-      actions: [
+      body: JSON.stringify({
+        url: searchUrl,
+        formats: ['markdown', 'html'],
+        onlyMainContent: false,
+        waitFor: 5000,
+        blockAds: false,
+        actions: [
         { type: 'wait', milliseconds: 3000 },
         {
           type: 'executeJavascript',
@@ -533,14 +531,13 @@ async function searchBMIWriters(name: string, apiKey: string): Promise<SearchRes
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      url: searchUrl,
-      formats: ['markdown', 'html'],
-      onlyMainContent: false,
-      waitFor: 5000,
-      proxy: 'stealth',
-      actions: [
-        { type: 'wait', milliseconds: 2000 },
+     body: JSON.stringify({
+       url: searchUrl,
+       formats: ['markdown', 'html'],
+       onlyMainContent: false,
+       waitFor: 5000,
+       actions: [
+         { type: 'wait', milliseconds: 2000 },
         {
           type: 'executeJavascript',
           script: `(() => {
@@ -651,14 +648,13 @@ async function searchBMIPublishers(name: string, apiKey: string): Promise<Search
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      url: searchUrl,
-      formats: ['markdown', 'html'],
-      onlyMainContent: false,
-      waitFor: 5000,
-      proxy: 'stealth',
-      actions: [
-        { type: 'wait', milliseconds: 2000 },
+     body: JSON.stringify({
+       url: searchUrl,
+       formats: ['markdown', 'html'],
+       onlyMainContent: false,
+       waitFor: 5000,
+       actions: [
+         { type: 'wait', milliseconds: 2000 },
         {
           type: 'executeJavascript',
           script: `(() => {

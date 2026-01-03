@@ -16,26 +16,47 @@ interface SearchSectionProps {
 export function SearchSection({ type, icon, results, onResultsChange }: SearchSectionProps) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [performerRealName, setPerformerRealName] = useState<string | null>(null);
   const { toast } = useToast();
 
   const handleSearch = async () => {
     if (!query.trim()) return;
-    
+
     setIsLoading(true);
     try {
       const response = await ascapApi.search(query, type);
-      if (response.success && response.results) {
-        onResultsChange(response.results);
-        if (response.results.length === 0) {
-          toast({
-            title: 'No results',
-            description: `No ${type}s found for "${query}"`,
-          });
+
+      if (response.success) {
+        // Performer searches may return a realName even when there are 0 IPI matches
+        if (type === 'performer') {
+          setPerformerRealName(response.realName || null);
+
+          if (response.realName) {
+            toast({
+              title: 'Real name found',
+              description: response.realName,
+            });
+          }
+        }
+
+        if (response.results) {
+          onResultsChange(response.results);
+
+          // Only show "No results" toast if we truly learned nothing useful.
+          const shouldShowNoResultsToast =
+            response.results.length === 0 && !(type === 'performer' && response.realName);
+
+          if (shouldShowNoResultsToast) {
+            toast({
+              title: 'No results',
+              description: `No ${type}s found for "${query}"`,
+            });
+          }
         }
       } else {
         toast({
           title: 'Search failed',
-          description: response.error || 'Failed to search ASCAP',
+          description: response.error || 'Failed to search',
           variant: 'destructive',
         });
       }
@@ -84,6 +105,13 @@ export function SearchSection({ type, icon, results, onResultsChange }: SearchSe
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
+
+        {type === 'performer' && performerRealName && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Real name: <span className="font-medium text-foreground">{performerRealName}</span>
+          </p>
+        )}
+
         {results.length > 0 && (
           <p className="mt-2 text-sm text-muted-foreground">
             {results.length} result{results.length !== 1 ? 's' : ''} found
