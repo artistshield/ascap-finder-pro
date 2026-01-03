@@ -6,7 +6,7 @@ import { SearchSection } from '@/components/SearchSection';
 import { ResultsTable } from '@/components/ResultsTable';
 import { SavedIPIsSection } from '@/components/SavedIPIsSection';
 import { SplitSheetTab } from '@/components/SplitSheet/SplitSheetTab';
-import { SearchResult } from '@/lib/api/ascap';
+import { ascapApi, SearchResult } from '@/lib/api/ascap';
 import { useSavedIPIs } from '@/hooks/useSavedIPIs';
 import { exportToCSV, exportToJSON } from '@/lib/export';
 import { useToast } from '@/hooks/use-toast';
@@ -16,8 +16,29 @@ const Index = () => {
   const [publisherResults, setPublisherResults] = useState<SearchResult[]>([]);
   const [performerResults, setPerformerResults] = useState<SearchResult[]>([]);
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
+  const [writerSearchQuery, setWriterSearchQuery] = useState('');
   const { saveIPIs, isSaving } = useSavedIPIs();
   const { toast } = useToast();
+
+  const handleSearchWriterFromPerformer = async (name: string) => {
+    setWriterSearchQuery(name);
+    try {
+      const response = await ascapApi.search(name, 'writer');
+      if (response.success && response.results) {
+        setWriterResults(response.results);
+        toast({
+          title: 'Writer search complete',
+          description: `Found ${response.results.length} result${response.results.length !== 1 ? 's' : ''} for "${name}"`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to search writers',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const allResults = [...writerResults, ...publisherResults, ...performerResults];
   const selectedItems = allResults.filter((r) => selectedResults.has(`${r.type}-${r.ipiNumber}`));
@@ -111,6 +132,7 @@ const Index = () => {
               icon={<Mic2 className="h-5 w-5 text-accent" />}
               results={performerResults}
               onResultsChange={setPerformerResults}
+              onSearchWriterName={handleSearchWriterFromPerformer}
             />
           </div>
         </section>

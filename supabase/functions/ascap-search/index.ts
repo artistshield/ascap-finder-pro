@@ -37,11 +37,10 @@ serve(async (req) => {
       );
     }
 
-    // For performer searches, use Wikipedia as primary source for real name
+    // For performer searches, just return the real name from Wikipedia (no writer search)
     if (searchType === 'performer') {
       console.log(`Searching for performer real name: ${query}`);
       
-      // PRIMARY: Scrape Wikipedia directly for the performer's real name
       let realName: string | null = null;
       
       try {
@@ -66,7 +65,6 @@ serve(async (req) => {
         const wikiMarkdown = wikiData.data?.markdown || wikiData.markdown || '';
         console.log('Wikipedia content preview:', wikiMarkdown.substring(0, 1500));
         
-        // Extract real name from Wikipedia content
         realName = extractRealNameFromWikipedia(query, wikiMarkdown);
         
         if (realName) {
@@ -75,47 +73,15 @@ serve(async (req) => {
       } catch (wikiError) {
         console.log('Wikipedia scrape failed:', wikiError);
       }
-      
-      // SECONDARY: If Wikipedia didn't work, try ASCAP repertory directly with stage name
-      if (!realName) {
-        console.log('Wikipedia lookup failed, trying ASCAP repertory as secondary method');
-        
-        // Try searching ASCAP with the stage name directly
-        const stageNameResults = await searchASCAPWriters(query, apiKey);
-        
-        if (stageNameResults.length > 0) {
-          console.log(`Found ${stageNameResults.length} results in ASCAP using stage name: ${query}`);
-          const performerResults = stageNameResults.map(r => ({
-            ...r,
-            type: 'performer' as const
-          }));
-          
-          return new Response(
-            JSON.stringify({ success: true, results: performerResults, realName: query, source: 'ascap-stagename' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-      }
 
-      const searchName = realName || query;
-      
-      // Search both ASCAP and BMI writers with the real name (or stage name as fallback)
-      const [ascapResults, bmiResults] = await Promise.all([
-        searchASCAPWriters(searchName, apiKey),
-        searchBMIWriters(searchName, apiKey)
-      ]);
-      
-      // Combine results, mark as performer type
-      const allResults = [...ascapResults, ...bmiResults];
-      const performerResults = allResults.map(r => ({
-        ...r,
-        type: 'performer' as const
-      }));
-
-      console.log(`Found ${performerResults.length} results for performer: ${query} (ASCAP: ${ascapResults.length}, BMI: ${bmiResults.length}, searched as: ${searchName})`);
-
+      // Just return the real name, no writer search
       return new Response(
-        JSON.stringify({ success: true, results: performerResults, realName: searchName, source: realName ? 'wikipedia' : 'stagename' }),
+        JSON.stringify({ 
+          success: true, 
+          results: [], 
+          realName: realName || null, 
+          source: realName ? 'wikipedia' : null 
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
