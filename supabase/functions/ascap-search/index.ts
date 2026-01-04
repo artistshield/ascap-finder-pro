@@ -87,27 +87,43 @@ serve(async (req) => {
     }
 
     // For writer and publisher searches, search both ASCAP and BMI
+    // Also try name variations for writers
     console.log(`Searching ${searchType} in both ASCAP and BMI for: ${query}`);
     
-    let ascapResults: SearchResult[] = [];
-    let bmiResults: SearchResult[] = [];
+    let allResults: SearchResult[] = [];
     
     if (searchType === 'writer') {
-      [ascapResults, bmiResults] = await Promise.all([
-        searchASCAPWriters(query, apiKey),
-        searchBMIWriters(query, apiKey)
+      // Generate name variations to try
+      const nameVariations = generateNameVariations(query);
+      console.log(`Trying name variations: ${nameVariations.join(', ')}`);
+      
+      // Search all variations in parallel
+      const searchPromises = nameVariations.flatMap(name => [
+        searchASCAPWriters(name, apiKey),
+        searchBMIWriters(name, apiKey)
       ]);
+      
+      const resultsArrays = await Promise.all(searchPromises);
+      
+      // Combine and deduplicate results by IPI number
+      const seenIPIs = new Set<string>();
+      for (const results of resultsArrays) {
+        for (const result of results) {
+          if (!seenIPIs.has(result.ipiNumber)) {
+            seenIPIs.add(result.ipiNumber);
+            allResults.push(result);
+          }
+        }
+      }
     } else if (searchType === 'publisher') {
-      [ascapResults, bmiResults] = await Promise.all([
+      const [ascapResults, bmiResults] = await Promise.all([
         searchASCAPPublishers(query, apiKey),
         searchBMIPublishers(query, apiKey)
       ]);
+      allResults = [...ascapResults, ...bmiResults];
     }
     
-    // Combine results from both PROs
-    const allResults = [...ascapResults, ...bmiResults];
-    
-    console.log(`Found ${allResults.length} total results for ${searchType}: ${query} (ASCAP: ${ascapResults.length}, BMI: ${bmiResults.length})`);
+    console.log(`Found ${allResults.length} total results for ${searchType}: ${query}`);
 
     return new Response(
       JSON.stringify({ success: true, results: allResults }),
@@ -122,6 +138,60 @@ serve(async (req) => {
     );
   }
 });
+
+// Generate name variations for better search results
+function generateNameVariations(fullName: string): string[] {
+  const variations = new Set<string>();
+  const trimmedName = fullName.trim();
+  
+  // Always include the original query
+  variations.add(trimmedName);
+  
+  // Split into parts
+  const parts = trimmedName.split(/\s+/);
+  
+  if (parts.length < 2) {
+    return [trimmedName];
+  }
+  
+  // Common suffixes to remove
+  const suffixes = ['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', 'esq', 'esq.', 'phd', 'md'];
+  
+  // Check if last part is a suffix
+  const lastPart = parts[parts.length - 1].toLowerCase();
+  const hasSuffix = suffixes.includes(lastPart);
+  
+  if (hasSuffix && parts.length >= 3) {
+    // Remove suffix: "John Michael Smith Jr." -> "John Michael Smith"
+    const withoutSuffix = parts.slice(0, -1).join(' ');
+    variations.add(withoutSuffix);
+    
+    // First and last without suffix: "John Michael Smith Jr." -> "John Smith"
+    const firstAndLastNoSuffix = `${parts[0]} ${parts[parts.length - 2]}`;
+    variations.add(firstAndLastNoSuffix);
+  }
+  
+  // First and last name only (skip middle names)
+  if (parts.length >= 3) {
+    const lastNameIndex = hasSuffix ? parts.length - 2 : parts.length - 1;
+    const firstAndLast = `${parts[0]} ${parts[lastNameIndex]}`;
+    variations.add(firstAndLast);
+  }
+  
+  // Handle middle initials: "John M. Smith" -> "John Smith"
+  if (parts.length === 3) {
+    const middlePart = parts[1];
+    // Check if middle part is an initial (1-2 chars, possibly with period)
+    if (middlePart.length <= 2 || (middlePart.length === 2 && middlePart.endsWith('.'))) {
+      const withoutMiddleInitial = `${parts[0]} ${parts[2]}`;
+      variations.add(withoutMiddleInitial);
+    }
+  }
+  
+  console.log(`Generated ${variations.size} name variations from "${fullName}":`, Array.from(variations));
+  
+  return Array.from(variations);
+}
 
 function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
   const stageNameLower = stageName.toLowerCase();
