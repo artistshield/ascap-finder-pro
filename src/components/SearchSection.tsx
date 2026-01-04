@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,17 +13,29 @@ interface SearchSectionProps {
   results: SearchResult[];
   onResultsChange: (results: SearchResult[]) => void;
   onSearchWriterName?: (name: string) => void;
+  onNewSearch?: () => void;
+  externalQuery?: string;
 }
 
-export function SearchSection({ type, icon, results, onResultsChange, onSearchWriterName }: SearchSectionProps) {
+export function SearchSection({ type, icon, results, onResultsChange, onSearchWriterName, onNewSearch, externalQuery }: SearchSectionProps) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [performerRealName, setPerformerRealName] = useState<string | null>(null);
   const [searchInWriters, setSearchInWriters] = useState(false);
   const { toast } = useToast();
 
+  // Update query when externalQuery changes (for writer search from performer)
+  React.useEffect(() => {
+    if (externalQuery !== undefined) {
+      setQuery(externalQuery);
+    }
+  }, [externalQuery]);
+
   const handleSearch = async () => {
     if (!query.trim()) return;
+
+    // Clear all previous search results
+    onNewSearch?.();
 
     setIsLoading(true);
     try {

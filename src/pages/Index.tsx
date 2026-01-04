@@ -20,6 +20,13 @@ const Index = () => {
   const { saveIPIs, isSaving } = useSavedIPIs();
   const { toast } = useToast();
 
+  const clearAllResults = () => {
+    setWriterResults([]);
+    setPublisherResults([]);
+    setPerformerResults([]);
+    setSelectedResults(new Set());
+  };
+
   const handleSearchWriterFromPerformer = async (name: string) => {
     setWriterSearchQuery(name);
     try {
@@ -120,12 +127,15 @@ const Index = () => {
               icon={<Pen className="h-5 w-5 text-primary" />}
               results={writerResults}
               onResultsChange={setWriterResults}
+              onNewSearch={clearAllResults}
+              externalQuery={writerSearchQuery}
             />
             <SearchSection
               type="publisher"
               icon={<Building2 className="h-5 w-5 text-secondary" />}
               results={publisherResults}
               onResultsChange={setPublisherResults}
+              onNewSearch={clearAllResults}
             />
             <SearchSection
               type="performer"
@@ -133,6 +143,7 @@ const Index = () => {
               results={performerResults}
               onResultsChange={setPerformerResults}
               onSearchWriterName={handleSearchWriterFromPerformer}
+              onNewSearch={clearAllResults}
             />
           </div>
         </section>
