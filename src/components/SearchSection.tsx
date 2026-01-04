@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { ascapApi, SearchResult } from '@/lib/api/ascap';
 import { useToast } from '@/hooks/use-toast';
 
@@ -12,66 +11,31 @@ interface SearchSectionProps {
   icon: React.ReactNode;
   results: SearchResult[];
   onResultsChange: (results: SearchResult[]) => void;
-  onSearchWriterName?: (name: string) => void;
-  onNewSearch?: () => void;
-  externalQuery?: string;
 }
 
-export function SearchSection({ type, icon, results, onResultsChange, onSearchWriterName, onNewSearch, externalQuery }: SearchSectionProps) {
+export function SearchSection({ type, icon, results, onResultsChange }: SearchSectionProps) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [performerRealName, setPerformerRealName] = useState<string | null>(null);
-  const [searchInWriters, setSearchInWriters] = useState(false);
   const { toast } = useToast();
-
-  // Update query when externalQuery changes (for writer search from performer)
-  React.useEffect(() => {
-    if (externalQuery !== undefined) {
-      setQuery(externalQuery);
-    }
-  }, [externalQuery]);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
-
-    // Clear all previous search results
-    onNewSearch?.();
-
+    
     setIsLoading(true);
     try {
       const response = await ascapApi.search(query, type);
-
-      if (response.success) {
-        // Performer searches may return a realName even when there are 0 IPI matches
-        if (type === 'performer') {
-          setPerformerRealName(response.realName || null);
-
-          if (response.realName) {
-            toast({
-              title: 'Real name found',
-              description: response.realName,
-            });
-          }
-        }
-
-        if (response.results) {
-          onResultsChange(response.results);
-
-          // Only show "No results" toast if we truly learned nothing useful.
-          const shouldShowNoResultsToast =
-            response.results.length === 0 && !(type === 'performer' && response.realName);
-
-          if (shouldShowNoResultsToast) {
-            toast({
-              title: 'No results',
-              description: `No ${type}s found for "${query}"`,
-            });
-          }
+      if (response.success && response.results) {
+        onResultsChange(response.results);
+        if (response.results.length === 0) {
+          toast({
+            title: 'No results',
+            description: `No ${type}s found for "${query}"`,
+          });
         }
       } else {
         toast({
           title: 'Search failed',
-          description: response.error || 'Failed to search',
+          description: response.error || 'Failed to search ASCAP',
           variant: 'destructive',
         });
       }
@@ -120,32 +84,6 @@ export function SearchSection({ type, icon, results, onResultsChange, onSearchWr
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
-
-        {type === 'performer' && performerRealName && (
-          <div className="mt-3 p-3 rounded-md bg-background/50 border border-border/50">
-            <p className="text-sm text-muted-foreground">
-              Real name: <span className="font-medium text-foreground">{performerRealName}</span>
-            </p>
-            {onSearchWriterName && (
-              <div className="flex items-center gap-2 mt-2">
-                <Checkbox
-                  id="search-writers"
-                  checked={searchInWriters}
-                  onCheckedChange={(checked) => {
-                    setSearchInWriters(!!checked);
-                    if (checked && performerRealName) {
-                      onSearchWriterName(performerRealName);
-                    }
-                  }}
-                />
-                <label htmlFor="search-writers" className="text-sm cursor-pointer">
-                  Search this name in Writers
-                </label>
-              </div>
-            )}
-          </div>
-        )}
-
         {results.length > 0 && (
           <p className="mt-2 text-sm text-muted-foreground">
             {results.length} result{results.length !== 1 ? 's' : ''} found

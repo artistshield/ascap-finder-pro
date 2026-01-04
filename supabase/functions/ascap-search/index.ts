@@ -37,10 +37,11 @@ serve(async (req) => {
       );
     }
 
-    // For performer searches, just return the real name from Wikipedia
+    // For performer searches, use Wikipedia as primary source for real name
     if (searchType === 'performer') {
       console.log(`Searching for performer real name: ${query}`);
       
+      // PRIMARY: Scrape Wikipedia directly for the performer's real name
       let realName: string | null = null;
       
       try {
@@ -65,6 +66,7 @@ serve(async (req) => {
         const wikiMarkdown = wikiData.data?.markdown || wikiData.markdown || '';
         console.log('Wikipedia content preview:', wikiMarkdown.substring(0, 1500));
         
+        // Extract real name from Wikipedia content
         realName = extractRealNameFromWikipedia(query, wikiMarkdown);
         
         if (realName) {
@@ -73,33 +75,179 @@ serve(async (req) => {
       } catch (wikiError) {
         console.log('Wikipedia scrape failed:', wikiError);
       }
+      
+      // SECONDARY: If Wikipedia didn't work, try ASCAP repertory directly with stage name
+      if (!realName) {
+        console.log('Wikipedia lookup failed, trying ASCAP repertory as secondary method');
+        
+        // Try searching ASCAP with the stage name directly
+        const stageNameResults = await searchASCAPWriters(query, apiKey);
+        
+        if (stageNameResults.length > 0) {
+          console.log(`Found ${stageNameResults.length} results in ASCAP using stage name: ${query}`);
+          const performerResults = stageNameResults.map(r => ({
+            ...r,
+            type: 'performer' as const
+          }));
+          
+          return new Response(
+            JSON.stringify({ success: true, results: performerResults, realName: query, source: 'ascap-stagename' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
+      const searchName = realName || query;
+      
+      // Search ASCAP writers with the real name (or stage name as fallback)
+      const writerResults = await searchASCAPWriters(searchName, apiKey);
+      
+      // Mark results as performer type
+      const performerResults = writerResults.map(r => ({
+        ...r,
+        type: 'performer' as const
+      }));
+
+      console.log(`Found ${performerResults.length} results for performer: ${query} (searched as: ${searchName})`);
 
       return new Response(
-        JSON.stringify({ 
-          success: true, 
-          results: [], 
-          realName: realName || null, 
-          source: realName ? 'wikipedia' : null 
-        }),
+        JSON.stringify({ success: true, results: performerResults, realName: searchName, source: realName ? 'wikipedia' : 'stagename' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // For writer and publisher searches, search ASCAP only
-    console.log(`Searching ${searchType} in ASCAP for: ${query}`);
+    // For writer and publisher searches, use ASCAP directly
+    const encodedQuery = encodeURIComponent(query);
+    let searchUrl = `https://www.ascap.com/repertory#/ace/search/`;
     
-    let results: SearchResult[] = [];
+    switch (searchType) {
+      case 'writer':
+        searchUrl += `writer/${encodedQuery}`;
+        break;
+      case 'publisher':
+        searchUrl += `publisher/${encodedQuery}`;
+        break;
+      default:
+        searchUrl += `workID/${encodedQuery}`;
+    }
+
+    console.log('Scraping ASCAP URL:', searchUrl);
+
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: searchUrl,
+        formats: ['markdown', 'html'],
+        onlyMainContent: false,
+        waitFor: 5000,
+        blockAds: false,
+        proxy: 'stealth',
+        actions: [
+          { type: 'wait', milliseconds: 3000 },
+          {
+            type: 'executeJavascript',
+            script: `(() => {
+              const buttons = document.querySelectorAll('button, a, span');
+              for (const btn of buttons) {
+                if (btn.textContent && btn.textContent.trim() === 'I Agree') {
+                  btn.click();
+                  return 'clicked';
+                }
+              }
+              return 'not_found';
+            })();`
+          },
+          { type: 'wait', milliseconds: 6000 },
+          {
+            type: 'executeJavascript',
+            script: `(() => {
+              const results = [];
+              const seen = new Set();
+              
+              const allElements = document.querySelectorAll('*');
+              allElements.forEach((el) => {
+                const text = el.textContent || '';
+                const ipiMatch = text.match(/(\\d{9,11})/);
+                if (ipiMatch && !seen.has(ipiMatch[1])) {
+                  if (el.children.length < 10 && text.length < 200) {
+                    const fullText = text.toLowerCase();
+                    const ipiIndex = fullText.indexOf('ipi');
+                    
+                    if (ipiIndex > 0) {
+                      let nameText = text.substring(0, ipiIndex).trim();
+                      nameText = nameText.replace(/^[\\d\\s\\-]+of[\\s\\d]+results?/i, '').trim();
+                      nameText = nameText.replace(/^results?/i, '').trim();
+                      
+                      if (nameText && nameText.length > 1 && nameText.length < 80 && !nameText.match(/^\\d+$/)) {
+                        seen.add(ipiMatch[1]);
+                        results.push({ name: nameText, ipi: ipiMatch[1] });
+                      }
+                    }
+                  }
+                }
+              });
+              
+              if (results.length === 0) {
+                const links = document.querySelectorAll('a[href*="ace"], .writer-name, .publisher-name, .performer-name, [class*="name"]');
+                links.forEach((link) => {
+                  const nameText = link.textContent?.trim();
+                  const parent = link.closest('tr, div, li, [class*="result"]');
+                  if (parent && nameText) {
+                    const parentText = parent.textContent || '';
+                    const ipiMatch = parentText.match(/(\\d{9,11})/);
+                    if (ipiMatch && !seen.has(ipiMatch[1]) && nameText.length > 1 && nameText.length < 80) {
+                      seen.add(ipiMatch[1]);
+                      results.push({ name: nameText, ipi: ipiMatch[1] });
+                    }
+                  }
+                });
+              }
+              
+              return JSON.stringify(results);
+            })();`
+          }
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('Firecrawl API error:', data);
+      return new Response(
+        JSON.stringify({ success: false, error: data.error || `Scraping failed` }),
+        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const markdown = data.data?.markdown || data.markdown || '';
+    const html = data.data?.html || data.html || '';
     
-    if (searchType === 'writer') {
-      results = await searchASCAPWriters(query, apiKey);
-    } else if (searchType === 'publisher') {
-      results = await searchASCAPPublishers(query, apiKey);
+    const jsReturns = data.data?.actions?.javascriptReturns || [];
+    let jsExtractedResults: Array<{name: string, ipi: string}> = [];
+    
+    if (jsReturns.length > 1 && jsReturns[1]?.value) {
+      try {
+        jsExtractedResults = JSON.parse(jsReturns[1].value);
+        console.log('JS extracted results:', jsExtractedResults);
+      } catch (e) {
+        console.log('Failed to parse JS results:', jsReturns[1]?.value);
+      }
     }
     
+    console.log('HTML preview (first 2000 chars):', html.substring(0, 2000));
+    console.log('Markdown preview (first 1500 chars):', markdown.substring(0, 1500));
+
+    const results = parseASCAPResults(markdown, html, searchType, jsExtractedResults);
+
     console.log(`Found ${results.length} results for ${searchType}: ${query}`);
 
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, results, rawContent: data.data?.markdown || data.markdown }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
@@ -115,95 +263,112 @@ serve(async (req) => {
 function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
   const stageNameLower = stageName.toLowerCase();
   
-  console.log('Extracting real name from Wikipedia for:', stageName);
+  // Wikipedia typically has the real name in the first paragraph
+  // Patterns like: "Calvin Cordozar Broadus Jr. (born October 20, 1971), known professionally as Snoop Dogg"
+  // Or: "Snoop Dogg (born Calvin Cordozar Broadus Jr.; October 20, 1971)"
   
-  // Wikipedia table format: "| Born | Calvin Cordozar Broadus Jr.<br>"
-  const tablePatterns = [
-    /\|\s*Born\s*\|\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V))?)\s*(?:<br>|\||\()/i,
-    /Born\s*\|\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V))?)\s*(?:<br>|\||\()/i,
+  const patterns = [
+    // "Real Name (born Date), known professionally as Stage Name"
+    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\s*\(born/i,
+    // "Stage Name (born Real Name; Date)"
+    new RegExp(`${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z]\\.?\\s*)?[A-Z][a-z]+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV)?)?)`, 'i'),
+    // "Real Name, known professionally as Stage Name"
+    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?),?\s*(?:known (?:professionally|as)|better known as|stage name)/i,
+    // "born Real Name" pattern
+    /born\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+    // "birth name Real Name"
+    /birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
+    // "né/née Real Name"
+    /n[ée]+\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
   ];
   
-  for (const pattern of tablePatterns) {
+  for (const pattern of patterns) {
     const match = wikiMarkdown.match(pattern);
     if (match && match[1]) {
-      let potentialName = match[1].trim();
-      potentialName = potentialName.replace(/\s*\(?\d{1,2}[,\s]+\d{4}\)?.*$/i, '').trim();
-      potentialName = potentialName.replace(/\s*\d{4}.*$/i, '').trim();
-      potentialName = potentialName.replace(/[,;]$/, '').trim();
-      
-      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
-      if (words.length >= 2 && 
+      const potentialName = match[1].trim();
+      // Validate it's a real name (at least 2 parts, not the stage name)
+      if (potentialName.split(/\s+/).length >= 2 && 
           !potentialName.toLowerCase().includes(stageNameLower) &&
           potentialName.length > 5 &&
-          potentialName.length < 60) {
-        console.log(`Found real name via table pattern: ${potentialName}`);
+          potentialName.length < 50) {
         return potentialName;
       }
     }
   }
   
-  // Look for "Born" line patterns
-  const bornLinePatterns = [
-    /\bBorn[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
-    /\bborn\s+([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)*(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i,
-  ];
+  // Try to find name in the first few sentences
+  const firstParagraph = wikiMarkdown.split('\n').slice(0, 10).join(' ');
   
-  for (const pattern of bornLinePatterns) {
-    const match = wikiMarkdown.match(pattern);
-    if (match && match[1]) {
-      let potentialName = match[1].trim();
-      potentialName = potentialName.replace(/\s*\(?\d{1,2}[,\s]+\d{4}\)?.*$/i, '').trim();
-      potentialName = potentialName.replace(/\s*\d{4}.*$/i, '').trim();
-      potentialName = potentialName.replace(/[,;]$/, '').trim();
-      
-      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
-      if (words.length >= 2 && 
-          !potentialName.toLowerCase().includes(stageNameLower) &&
-          potentialName.length > 5 &&
-          potentialName.length < 60) {
-        console.log(`Found real name via Born pattern: ${potentialName}`);
-        return potentialName;
-      }
-    }
-  }
-  
-  // Try patterns in first paragraph
-  const firstParagraph = wikiMarkdown.split('\n').slice(0, 30).join(' ');
-  const stageNameEscaped = stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const introPatterns = [
-    new RegExp(`${stageNameEscaped}[^(]*\\(born\\s+([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]*\\.?)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`, 'i'),
-    /^[*\s]*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[*\s]*,?\s*(?:\(|known|better known|professionally)/i,
-  ];
-  
-  for (const pattern of introPatterns) {
-    const match = firstParagraph.match(pattern);
-    if (match && match[1]) {
-      let potentialName = match[1].trim();
-      potentialName = potentialName.replace(/[,;]$/, '').trim();
-      
-      const words = potentialName.split(/\s+/).filter(w => w.length > 0);
-      if (words.length >= 2 && 
-          !potentialName.toLowerCase().includes(stageNameLower) &&
-          potentialName.length > 5 &&
-          potentialName.length < 60) {
-        console.log(`Found real name via intro pattern: ${potentialName}`);
-        return potentialName;
-      }
-    }
-  }
-  
-  // Try birth name pattern
-  const birthNameMatch = wikiMarkdown.match(/birth\s*name[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]*\.?)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
-  if (birthNameMatch && birthNameMatch[1]) {
-    const name = birthNameMatch[1].trim().replace(/[,;]$/, '');
-    const words = name.split(/\s+/).filter(w => w.length > 0);
-    if (words.length >= 2 && !name.toLowerCase().includes(stageNameLower)) {
-      console.log(`Found real name via birth name pattern: ${name}`);
+  // Look for pattern: "Full Name (born/née"
+  const introMatch = firstParagraph.match(/^\*?\*?([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\*?\*?\s*\(/);
+  if (introMatch && introMatch[1]) {
+    const name = introMatch[1].trim();
+    if (name.split(/\s+/).length >= 2 && 
+        !name.toLowerCase().includes(stageNameLower) &&
+        name.length > 5) {
       return name;
     }
   }
   
-  console.log('No real name found in Wikipedia content');
+  return null;
+}
+
+function extractRealName(stageName: string, searchData: any): string | null {
+  const results = searchData.data || searchData.results || [];
+  const stageNameLower = stageName.toLowerCase();
+  
+  // Common patterns for real names in search results
+  const realNamePatterns = [
+    /(?:born|birth name|real name|legal name|née)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/gi,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})(?:\s*,?\s*(?:known (?:professionally|as)|stage name|better known as|born))/gi,
+    /\((?:born|née)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\)/gi,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*\(.*?(?:stage name|known as|professionally).*?\)/gi,
+  ];
+  
+  for (const result of results) {
+    const content = (result.markdown || result.description || result.content || result.snippet || '');
+    const title = result.title || '';
+    const fullText = `${title} ${content}`;
+    
+    // Skip if this doesn't seem to be about the performer
+    if (!fullText.toLowerCase().includes(stageNameLower)) {
+      continue;
+    }
+    
+    console.log('Checking content for real name:', fullText.substring(0, 500));
+    
+    for (const pattern of realNamePatterns) {
+      pattern.lastIndex = 0; // Reset regex
+      const matches = fullText.matchAll(new RegExp(pattern.source, 'gi'));
+      
+      for (const match of matches) {
+        const potentialName = match[1]?.trim();
+        if (potentialName && 
+            potentialName.length > 3 && 
+            potentialName.length < 50 &&
+            !potentialName.toLowerCase().includes(stageNameLower) &&
+            potentialName.split(' ').length >= 2) {
+          console.log(`Found potential real name: ${potentialName}`);
+          return potentialName;
+        }
+      }
+    }
+    
+    // Also try to find "FirstName LastName" patterns near mentions of real/birth name
+    const birthNameIndex = fullText.toLowerCase().search(/(?:born|birth name|real name|legal name)/);
+    if (birthNameIndex !== -1) {
+      const nearbyText = fullText.substring(birthNameIndex, birthNameIndex + 100);
+      const nameMatch = nearbyText.match(/([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
+      if (nameMatch && nameMatch[1] && nameMatch[1].split(' ').length >= 2) {
+        const name = nameMatch[1].trim();
+        if (!name.toLowerCase().includes(stageNameLower) && name.length > 5) {
+          console.log(`Found real name near keyword: ${name}`);
+          return name;
+        }
+      }
+    }
+  }
+  
   return null;
 }
 
@@ -224,6 +389,8 @@ async function searchASCAPWriters(name: string, apiKey: string): Promise<SearchR
       formats: ['markdown', 'html'],
       onlyMainContent: false,
       waitFor: 5000,
+      blockAds: false,
+      proxy: 'stealth',
       actions: [
         { type: 'wait', milliseconds: 3000 },
         {
@@ -286,8 +453,6 @@ async function searchASCAPWriters(name: string, apiKey: string): Promise<SearchR
   const markdown = data.data?.markdown || data.markdown || '';
   const html = data.data?.html || data.html || '';
   
-  console.log('ASCAP Writer markdown preview:', markdown.substring(0, 500));
-  
   const jsReturns = data.data?.actions?.javascriptReturns || [];
   let jsExtractedResults: Array<{name: string, ipi: string}> = [];
   
@@ -303,102 +468,6 @@ async function searchASCAPWriters(name: string, apiKey: string): Promise<SearchR
   return parseASCAPResults(markdown, html, 'writer', jsExtractedResults);
 }
 
-async function searchASCAPPublishers(name: string, apiKey: string): Promise<SearchResult[]> {
-  const encodedQuery = encodeURIComponent(name);
-  const searchUrl = `https://www.ascap.com/repertory#/ace/search/publisher/${encodedQuery}`;
-  
-  console.log('Searching ASCAP publishers for:', name);
-
-  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      url: searchUrl,
-      formats: ['markdown', 'html'],
-      onlyMainContent: false,
-      waitFor: 5000,
-      actions: [
-        { type: 'wait', milliseconds: 3000 },
-        {
-          type: 'executeJavascript',
-          script: `(() => {
-            const buttons = document.querySelectorAll('button, a, span');
-            for (const btn of buttons) {
-              if (btn.textContent && btn.textContent.trim() === 'I Agree') {
-                btn.click();
-                return 'clicked';
-              }
-            }
-            return 'not_found';
-          })();`
-        },
-        { type: 'wait', milliseconds: 6000 },
-        {
-          type: 'executeJavascript',
-          script: `(() => {
-            const results = [];
-            const seen = new Set();
-            
-            const allElements = document.querySelectorAll('*');
-            allElements.forEach((el) => {
-              const text = el.textContent || '';
-              const ipiMatch = text.match(/(\\d{9,11})/);
-              if (ipiMatch && !seen.has(ipiMatch[1])) {
-                if (el.children.length < 10 && text.length < 200) {
-                  const fullText = text.toLowerCase();
-                  const ipiIndex = fullText.indexOf('ipi');
-                  
-                  if (ipiIndex > 0) {
-                    let nameText = text.substring(0, ipiIndex).trim();
-                    nameText = nameText.replace(/^[\\d\\s\\-]+of[\\s\\d]+results?/i, '').trim();
-                    nameText = nameText.replace(/^results?/i, '').trim();
-                    
-                    if (nameText && nameText.length > 1 && nameText.length < 80 && !nameText.match(/^\\d+$/)) {
-                      seen.add(ipiMatch[1]);
-                      results.push({ name: nameText, ipi: ipiMatch[1] });
-                    }
-                  }
-                }
-              }
-            });
-            
-            return JSON.stringify(results);
-          })();`
-        }
-      ],
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    console.error('Firecrawl API error searching publishers:', data);
-    return [];
-  }
-
-  const markdown = data.data?.markdown || data.markdown || '';
-  const html = data.data?.html || data.html || '';
-  
-  console.log('ASCAP Publisher markdown preview:', markdown.substring(0, 500));
-  
-  const jsReturns = data.data?.actions?.javascriptReturns || [];
-  let jsExtractedResults: Array<{name: string, ipi: string}> = [];
-  
-  if (jsReturns.length > 1 && jsReturns[1]?.value) {
-    try {
-      jsExtractedResults = JSON.parse(jsReturns[1].value);
-      console.log('JS extracted ASCAP publisher results:', jsExtractedResults);
-    } catch (e) {
-      console.log('Failed to parse JS ASCAP publisher results');
-    }
-  }
-
-  return parseASCAPResults(markdown, html, 'publisher', jsExtractedResults);
-}
-
 function parseASCAPResults(
   markdown: string, 
   html: string, 
@@ -408,7 +477,6 @@ function parseASCAPResults(
   const results: SearchResult[] = [];
   const seen = new Set<string>();
   
-  // First use JS extracted results
   for (const item of jsExtracted) {
     if (item.ipi && item.name && !seen.has(item.ipi)) {
       seen.add(item.ipi);
@@ -425,16 +493,18 @@ function parseASCAPResults(
     return results.slice(0, 50);
   }
   
-  // Fallback: parse from HTML tables
+  const ipiRegex = /\b(\d{9,11})\b/g;
+  
   const tableRowPattern = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>(\d{9,11})<\/td>[\s\S]*?<\/tr>/gi;
   let match;
   
   while ((match = tableRowPattern.exec(html)) !== null) {
     const name = match[1].trim();
     const ipi = match[2];
+    const key = `${ipi}`;
     
-    if (!seen.has(ipi) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/)) {
-      seen.add(ipi);
+    if (!seen.has(key) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/)) {
+      seen.add(key);
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
@@ -444,15 +514,15 @@ function parseASCAPResults(
     }
   }
   
-  // Try markdown patterns
   const mdNameIpiPattern = /([A-Z][A-Za-z\s,.'()-]+?)\s*[|\-–]\s*(\d{9,11})/g;
   
   while ((match = mdNameIpiPattern.exec(markdown)) !== null) {
     const name = match[1].trim();
     const ipi = match[2];
+    const key = `${ipi}`;
     
-    if (!seen.has(ipi) && name.length > 1 && name.length < 100) {
-      seen.add(ipi);
+    if (!seen.has(key) && name.length > 1 && name.length < 100) {
+      seen.add(key);
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
@@ -462,15 +532,15 @@ function parseASCAPResults(
     }
   }
   
-  // Try table markdown pattern
   const tablePattern = /\|\s*([^|]+?)\s*\|\s*(\d{9,11})\s*\|/g;
   
   while ((match = tablePattern.exec(markdown)) !== null) {
     const name = match[1].trim();
     const ipi = match[2];
+    const key = `${ipi}`;
     
-    if (!seen.has(ipi) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/) && !name.match(/^IPI/i)) {
-      seen.add(ipi);
+    if (!seen.has(key) && name.length > 1 && name.length < 100 && !name.match(/^\d+$/) && !name.match(/^IPI/i)) {
+      seen.add(key);
       results.push({
         name: formatName(name),
         ipiNumber: ipi,
@@ -480,7 +550,6 @@ function parseASCAPResults(
     }
   }
   
-  // Last resort: look for IPI numbers with nearby names
   if (results.length === 0) {
     const lines = markdown.split('\n');
     for (let i = 0; i < lines.length; i++) {
@@ -499,8 +568,9 @@ function parseASCAPResults(
         }
         
         if (name && name.length > 2 && name.length < 100) {
-          if (!seen.has(ipiMatch[1])) {
-            seen.add(ipiMatch[1]);
+          const key = `${ipiMatch[1]}`;
+          if (!seen.has(key)) {
+            seen.add(key);
             results.push({
               name: formatName(name),
               ipiNumber: ipiMatch[1],

@@ -10,8 +10,6 @@ export interface SearchResult {
 export interface ASCAPSearchResponse {
   success: boolean;
   results?: SearchResult[];
-  realName?: string;
-  source?: string;
   error?: string;
   rawContent?: string;
 }

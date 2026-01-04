@@ -6,7 +6,7 @@ import { SearchSection } from '@/components/SearchSection';
 import { ResultsTable } from '@/components/ResultsTable';
 import { SavedIPIsSection } from '@/components/SavedIPIsSection';
 import { SplitSheetTab } from '@/components/SplitSheet/SplitSheetTab';
-import { ascapApi, SearchResult } from '@/lib/api/ascap';
+import { SearchResult } from '@/lib/api/ascap';
 import { useSavedIPIs } from '@/hooks/useSavedIPIs';
 import { exportToCSV, exportToJSON } from '@/lib/export';
 import { useToast } from '@/hooks/use-toast';
@@ -16,36 +16,8 @@ const Index = () => {
   const [publisherResults, setPublisherResults] = useState<SearchResult[]>([]);
   const [performerResults, setPerformerResults] = useState<SearchResult[]>([]);
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
-  const [writerSearchQuery, setWriterSearchQuery] = useState('');
   const { saveIPIs, isSaving } = useSavedIPIs();
   const { toast } = useToast();
-
-  const clearAllResults = () => {
-    setWriterResults([]);
-    setPublisherResults([]);
-    setPerformerResults([]);
-    setSelectedResults(new Set());
-  };
-
-  const handleSearchWriterFromPerformer = async (name: string) => {
-    setWriterSearchQuery(name);
-    try {
-      const response = await ascapApi.search(name, 'writer');
-      if (response.success && response.results) {
-        setWriterResults(response.results);
-        toast({
-          title: 'Writer search complete',
-          description: `Found ${response.results.length} result${response.results.length !== 1 ? 's' : ''} for "${name}"`,
-        });
-      }
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to search writers',
-        variant: 'destructive',
-      });
-    }
-  };
 
   const allResults = [...writerResults, ...publisherResults, ...performerResults];
   const selectedItems = allResults.filter((r) => selectedResults.has(`${r.type}-${r.ipiNumber}`));
@@ -89,7 +61,7 @@ const Index = () => {
                 <Mic2 className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">Publishing IPI Search</h1>
+                <h1 className="text-xl font-bold tracking-tight">ASCAP IPI Search</h1>
                 <p className="text-sm text-muted-foreground">Music Rights Database Explorer</p>
               </div>
             </div>
@@ -119,7 +91,7 @@ const Index = () => {
         <section>
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-            Search Publishing Repertories
+            Search ASCAP Repertory
           </h2>
           <div className="grid md:grid-cols-3 gap-4">
             <SearchSection
@@ -127,23 +99,18 @@ const Index = () => {
               icon={<Pen className="h-5 w-5 text-primary" />}
               results={writerResults}
               onResultsChange={setWriterResults}
-              onNewSearch={clearAllResults}
-              externalQuery={writerSearchQuery}
             />
             <SearchSection
               type="publisher"
               icon={<Building2 className="h-5 w-5 text-secondary" />}
               results={publisherResults}
               onResultsChange={setPublisherResults}
-              onNewSearch={clearAllResults}
             />
             <SearchSection
               type="performer"
               icon={<Mic2 className="h-5 w-5 text-accent" />}
               results={performerResults}
               onResultsChange={setPerformerResults}
-              onSearchWriterName={handleSearchWriterFromPerformer}
-              onNewSearch={clearAllResults}
             />
           </div>
         </section>
@@ -184,7 +151,7 @@ const Index = () => {
       {/* Footer */}
       <footer className="border-t border-border/50 py-6 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>Data sourced from public PRO repertories • For music industry research purposes</p>
+          <p>Data sourced from ASCAP Repertory • For music industry research purposes</p>
         </div>
       </footer>
     </div>
