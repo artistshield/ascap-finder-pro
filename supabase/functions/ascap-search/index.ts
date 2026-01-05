@@ -284,74 +284,47 @@ serve(async (req) => {
 function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
   const stageNameLower = stageName.toLowerCase();
   
-  // Get first 2000 chars for analysis - real name is usually in intro
-  const intro = wikiMarkdown.substring(0, 2000);
+  console.log('Analyzing Wikipedia content for real name extraction');
   
-  console.log('Analyzing Wikipedia intro for real name extraction');
+  // Pattern 1: Wikipedia infobox table format "| Born | Real Name<br>" or "| Born | Real Name |"
+  const bornTableMatch = wikiMarkdown.match(/\|\s*Born\s*\|\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  if (bornTableMatch && bornTableMatch[1]) {
+    const name = bornTableMatch[1].trim().replace(/<br>.*$/i, '').replace(/[,;.]$/, '');
+    console.log(`Table Born pattern match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
   
-  // Pattern 1: "Stage Name, born Real Name" (e.g., "Snoop Dogg, born Calvin Cordozar Broadus Jr.")
+  // Pattern 2: "Stage Name, born Real Name" in text
   const bornPattern = new RegExp(
     `${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,\\s]+born\\s+([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`,
     'i'
   );
-  const bornMatch = intro.match(bornPattern);
+  const bornMatch = wikiMarkdown.match(bornPattern);
   if (bornMatch && bornMatch[1]) {
     const name = bornMatch[1].trim().replace(/[,;.]$/, '');
-    console.log(`Pattern 1 match: "${name}"`);
+    console.log(`Text born pattern match: "${name}"`);
     if (isValidRealName(name, stageNameLower)) {
       return name;
     }
   }
   
-  // Pattern 2: "(born Real Name;" or "(born Real Name," - name inside parentheses
-  const parenBornMatch = intro.match(/\(born\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[;,]/i);
+  // Pattern 3: "(born Real Name;" or "(born Real Name,"
+  const parenBornMatch = wikiMarkdown.match(/\(born\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[;,]/i);
   if (parenBornMatch && parenBornMatch[1]) {
     const name = parenBornMatch[1].trim();
-    console.log(`Pattern 2 match: "${name}"`);
-    if (isValidRealName(name, stageNameLower)) {
-      return name;
-    }
-  }
-  
-  // Pattern 3: "Real Name (born Date)" at start - full name before first parenthesis
-  const startNameMatch = intro.match(/^\*?\*?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)\*?\*?\s*\(born/i);
-  if (startNameMatch && startNameMatch[1]) {
-    const name = startNameMatch[1].trim();
-    console.log(`Pattern 3 match: "${name}"`);
+    console.log(`Parentheses born pattern match: "${name}"`);
     if (isValidRealName(name, stageNameLower)) {
       return name;
     }
   }
   
   // Pattern 4: "birth name Real Name" or "real name Real Name"
-  const birthNameMatch = intro.match(/(?:birth\s*name|real\s*name)[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  const birthNameMatch = wikiMarkdown.match(/(?:birth\s*name|real\s*name)[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
   if (birthNameMatch && birthNameMatch[1]) {
     const name = birthNameMatch[1].trim();
-    console.log(`Pattern 4 match: "${name}"`);
-    if (isValidRealName(name, stageNameLower)) {
-      return name;
-    }
-  }
-  
-  // Pattern 5: "known professionally as Stage Name" - name before this phrase
-  const knownAsPattern = new RegExp(
-    `([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)\\s*(?:\\([^)]+\\))?\\s*,?\\s*(?:known professionally as|better known as|known as)\\s+${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-    'i'
-  );
-  const knownAsMatch = intro.match(knownAsPattern);
-  if (knownAsMatch && knownAsMatch[1]) {
-    const name = knownAsMatch[1].trim();
-    console.log(`Pattern 5 match: "${name}"`);
-    if (isValidRealName(name, stageNameLower)) {
-      return name;
-    }
-  }
-  
-  // Pattern 6: "né/née Real Name"
-  const neeMatch = intro.match(/n[ée]+\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
-  if (neeMatch && neeMatch[1]) {
-    const name = neeMatch[1].trim();
-    console.log(`Pattern 6 match: "${name}"`);
+    console.log(`Birth name pattern match: "${name}"`);
     if (isValidRealName(name, stageNameLower)) {
       return name;
     }
