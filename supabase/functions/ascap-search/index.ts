@@ -37,11 +37,11 @@ serve(async (req) => {
       );
     }
 
-    // For performer searches, use Wikipedia as primary source for real name
+    // For performer searches, use Wikipedia to find real name
     if (searchType === 'performer') {
       console.log(`Searching for performer real name: ${query}`);
       
-      // PRIMARY: Scrape Wikipedia directly for the performer's real name
+      // Scrape Wikipedia to find the performer's real name
       let realName: string | null = null;
       
       try {
@@ -76,42 +76,63 @@ serve(async (req) => {
         console.log('Wikipedia scrape failed:', wikiError);
       }
       
-      // SECONDARY: If Wikipedia didn't work, try ASCAP repertory directly with stage name
-      if (!realName) {
-        console.log('Wikipedia lookup failed, trying ASCAP repertory as secondary method');
+      // If real name found, return it as a single result for user to search in writers
+      if (realName) {
+        const performerResult: SearchResult = {
+          name: realName,
+          ipiNumber: '',
+          type: 'performer',
+          pro: 'Wikipedia'
+        };
         
-        // Try searching ASCAP with the stage name directly
-        const stageNameResults = await searchASCAPWriters(query, apiKey);
+        console.log(`Returning performer real name: ${realName} for stage name: ${query}`);
         
-        if (stageNameResults.length > 0) {
-          console.log(`Found ${stageNameResults.length} results in ASCAP using stage name: ${query}`);
-          const performerResults = stageNameResults.map(r => ({
-            ...r,
-            type: 'performer' as const
-          }));
-          
-          return new Response(
-            JSON.stringify({ success: true, results: performerResults, realName: query, source: 'ascap-stagename' }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            results: [performerResult], 
+            realName: realName,
+            stageName: query,
+            source: 'wikipedia',
+            message: `Real name found: ${realName}. Search this name in Writers to find IPI.`
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
-
-      const searchName = realName || query;
       
-      // Search ASCAP writers with the real name (or stage name as fallback)
-      const writerResults = await searchASCAPWriters(searchName, apiKey);
+      // FALLBACK: If Wikipedia didn't find a real name, search ASCAP with stage name
+      console.log('No real name found on Wikipedia, falling back to ASCAP search with stage name');
       
-      // Mark results as performer type
-      const performerResults = writerResults.map(r => ({
-        ...r,
-        type: 'performer' as const
-      }));
-
-      console.log(`Found ${performerResults.length} results for performer: ${query} (searched as: ${searchName})`);
-
+      const stageNameResults = await searchASCAPWriters(query, apiKey);
+      
+      if (stageNameResults.length > 0) {
+        console.log(`Found ${stageNameResults.length} results in ASCAP using stage name: ${query}`);
+        const performerResults = stageNameResults.map(r => ({
+          ...r,
+          type: 'performer' as const
+        }));
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            results: performerResults, 
+            stageName: query,
+            source: 'ascap-stagename',
+            message: 'No Wikipedia real name found. Showing ASCAP results for stage name.'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // No results found anywhere
       return new Response(
-        JSON.stringify({ success: true, results: performerResults, realName: searchName, source: realName ? 'wikipedia' : 'stagename' }),
+        JSON.stringify({ 
+          success: true, 
+          results: [], 
+          stageName: query,
+          source: 'none',
+          message: 'No real name found on Wikipedia and no ASCAP results for stage name.'
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -263,54 +284,99 @@ serve(async (req) => {
 function extractRealNameFromWikipedia(stageName: string, wikiMarkdown: string): string | null {
   const stageNameLower = stageName.toLowerCase();
   
-  // Wikipedia typically has the real name in the first paragraph
-  // Patterns like: "Calvin Cordozar Broadus Jr. (born October 20, 1971), known professionally as Snoop Dogg"
-  // Or: "Snoop Dogg (born Calvin Cordozar Broadus Jr.; October 20, 1971)"
+  // Get first 2000 chars for analysis - real name is usually in intro
+  const intro = wikiMarkdown.substring(0, 2000);
   
-  const patterns = [
-    // "Real Name (born Date), known professionally as Stage Name"
-    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\s*\(born/i,
-    // "Stage Name (born Real Name; Date)"
-    new RegExp(`${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^(]*\\(born\\s+([A-Z][a-z]+(?:\\s+[A-Z]\\.?\\s*)?[A-Z][a-z]+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV)?)?)`, 'i'),
-    // "Real Name, known professionally as Stage Name"
-    /^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?),?\s*(?:known (?:professionally|as)|better known as|stage name)/i,
-    // "born Real Name" pattern
-    /born\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
-    // "birth name Real Name"
-    /birth\s*name[:\s]+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
-    // "né/née Real Name"
-    /n[ée]+\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)/i,
-  ];
+  console.log('Analyzing Wikipedia intro for real name extraction');
   
-  for (const pattern of patterns) {
-    const match = wikiMarkdown.match(pattern);
-    if (match && match[1]) {
-      const potentialName = match[1].trim();
-      // Validate it's a real name (at least 2 parts, not the stage name)
-      if (potentialName.split(/\s+/).length >= 2 && 
-          !potentialName.toLowerCase().includes(stageNameLower) &&
-          potentialName.length > 5 &&
-          potentialName.length < 50) {
-        return potentialName;
-      }
-    }
-  }
-  
-  // Try to find name in the first few sentences
-  const firstParagraph = wikiMarkdown.split('\n').slice(0, 10).join(' ');
-  
-  // Look for pattern: "Full Name (born/née"
-  const introMatch = firstParagraph.match(/^\*?\*?([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:\s+(?:Jr\.|Sr\.|III?|IV)?)?)\*?\*?\s*\(/);
-  if (introMatch && introMatch[1]) {
-    const name = introMatch[1].trim();
-    if (name.split(/\s+/).length >= 2 && 
-        !name.toLowerCase().includes(stageNameLower) &&
-        name.length > 5) {
+  // Pattern 1: "Stage Name, born Real Name" (e.g., "Snoop Dogg, born Calvin Cordozar Broadus Jr.")
+  const bornPattern = new RegExp(
+    `${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,\\s]+born\\s+([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)`,
+    'i'
+  );
+  const bornMatch = intro.match(bornPattern);
+  if (bornMatch && bornMatch[1]) {
+    const name = bornMatch[1].trim().replace(/[,;.]$/, '');
+    console.log(`Pattern 1 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
       return name;
     }
   }
   
+  // Pattern 2: "(born Real Name;" or "(born Real Name," - name inside parentheses
+  const parenBornMatch = intro.match(/\(born\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)[;,]/i);
+  if (parenBornMatch && parenBornMatch[1]) {
+    const name = parenBornMatch[1].trim();
+    console.log(`Pattern 2 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
+  
+  // Pattern 3: "Real Name (born Date)" at start - full name before first parenthesis
+  const startNameMatch = intro.match(/^\*?\*?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)\*?\*?\s*\(born/i);
+  if (startNameMatch && startNameMatch[1]) {
+    const name = startNameMatch[1].trim();
+    console.log(`Pattern 3 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
+  
+  // Pattern 4: "birth name Real Name" or "real name Real Name"
+  const birthNameMatch = intro.match(/(?:birth\s*name|real\s*name)[:\s]+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  if (birthNameMatch && birthNameMatch[1]) {
+    const name = birthNameMatch[1].trim();
+    console.log(`Pattern 4 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
+  
+  // Pattern 5: "known professionally as Stage Name" - name before this phrase
+  const knownAsPattern = new RegExp(
+    `([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)+(?:\\s+(?:Jr\\.|Sr\\.|III?|IV|V)?)?)\\s*(?:\\([^)]+\\))?\\s*,?\\s*(?:known professionally as|better known as|known as)\\s+${stageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    'i'
+  );
+  const knownAsMatch = intro.match(knownAsPattern);
+  if (knownAsMatch && knownAsMatch[1]) {
+    const name = knownAsMatch[1].trim();
+    console.log(`Pattern 5 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
+  
+  // Pattern 6: "né/née Real Name"
+  const neeMatch = intro.match(/n[ée]+\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+(?:\s+(?:Jr\.|Sr\.|III?|IV|V)?)?)/i);
+  if (neeMatch && neeMatch[1]) {
+    const name = neeMatch[1].trim();
+    console.log(`Pattern 6 match: "${name}"`);
+    if (isValidRealName(name, stageNameLower)) {
+      return name;
+    }
+  }
+  
+  console.log('No real name pattern matched');
   return null;
+}
+
+function isValidRealName(name: string, stageNameLower: string): boolean {
+  // Must have at least 2 words
+  const words = name.split(/\s+/).filter(w => w.length > 0);
+  if (words.length < 2) return false;
+  
+  // Must not contain the stage name
+  if (name.toLowerCase().includes(stageNameLower)) return false;
+  
+  // Reasonable length
+  if (name.length < 5 || name.length > 60) return false;
+  
+  // Should not start with common non-name words
+  const invalidStarts = ['the', 'a', 'an', 'is', 'was', 'born', 'known'];
+  if (invalidStarts.includes(words[0].toLowerCase())) return false;
+  
+  return true;
 }
 
 function extractRealName(stageName: string, searchData: any): string | null {
