@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
-import { ascapApi, SearchResult } from '@/lib/api/ascap';
+import { ascapApi, SearchResult, generateNameVariations } from '@/lib/api/ascap';
 import { useToast } from '@/hooks/use-toast';
 
 interface SearchSectionProps {
@@ -32,26 +32,42 @@ export function SearchSection({
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPerformer, setSelectedPerformer] = useState<string>('');
+  const [searchedVariations, setSearchedVariations] = useState<string[]>([]);
+  const processedQueryRef = useRef<string>('');
   const { toast } = useToast();
 
-  // Handle external query for writers
+  // Handle external query for writers (from performer search)
   useEffect(() => {
-    if (externalQuery && type === 'writer') {
+    if (externalQuery && type === 'writer' && externalQuery !== processedQueryRef.current) {
+      processedQueryRef.current = externalQuery;
+      // Clear previous results first
+      onResultsChange([]);
       setQuery(externalQuery);
-      handleExternalSearch(externalQuery);
+      handlePerformerNameSearch(externalQuery);
     }
   }, [externalQuery]);
 
-  const handleExternalSearch = async (searchQuery: string) => {
+  // Special search for performer names - tries multiple variations
+  const handlePerformerNameSearch = async (performerName: string) => {
     setIsLoading(true);
+    const variations = generateNameVariations(performerName);
+    setSearchedVariations(variations);
+    
+    console.log('Searching writer with name variations:', variations);
+    
     try {
-      const response = await ascapApi.search(searchQuery, 'writer');
+      const response = await ascapApi.searchWithVariations(performerName, 'writer');
       if (response.success && response.results) {
         onResultsChange(response.results);
         if (response.results.length === 0) {
           toast({
             title: 'No results',
-            description: `No writers found for "${searchQuery}"`,
+            description: `No writers found for "${performerName}" (tried: ${variations.join(', ')})`,
+          });
+        } else {
+          toast({
+            title: 'Search complete',
+            description: `Found ${response.results.length} writer(s) using name variations`,
           });
         }
       } else {
