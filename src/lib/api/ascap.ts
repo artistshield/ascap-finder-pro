@@ -32,16 +32,13 @@ export function generateNameVariations(fullName: string): string[] {
     const firstName = parts[0];
     const lastName = parts[parts.length - 1];
     
-    // First + Last only (e.g., "Calvin Broadus")
+    // First + Last only (e.g., "Calvin Broadus") - only if there's a middle name
     if (parts.length > 2) {
       variations.push(`${firstName} ${lastName}`);
     }
     
     // Last, First format (e.g., "Broadus, Calvin")
     variations.push(`${lastName}, ${firstName}`);
-    
-    // Last name only
-    variations.push(lastName);
   }
   
   // Return unique variations
