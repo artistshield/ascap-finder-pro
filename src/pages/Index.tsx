@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Pen, Building2, Mic2, Save, Download, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,10 +16,12 @@ const Index = () => {
   const [publisherResults, setPublisherResults] = useState<SearchResult[]>([]);
   const [performerResults, setPerformerResults] = useState<SearchResult[]>([]);
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
+  const [writerSearchQuery, setWriterSearchQuery] = useState<string>('');
   const { saveIPIs, isSaving } = useSavedIPIs();
   const { toast } = useToast();
 
-  const allResults = [...writerResults, ...publisherResults, ...performerResults];
+  // Only include writer and publisher results in the table (performer results shown inline)
+  const allResults = [...writerResults, ...publisherResults];
   const selectedItems = allResults.filter((r) => selectedResults.has(`${r.type}-${r.ipiNumber}`));
 
   const handleSaveSelected = () => {
@@ -50,6 +52,39 @@ const Index = () => {
     }
   };
 
+  // Clear writer and publisher results when writer search is executed
+  const handleWriterSearchExecuted = useCallback(() => {
+    setPublisherResults([]);
+    setPerformerResults([]);
+    setSelectedResults(new Set());
+  }, []);
+
+  // Clear writer and performer results when publisher search is executed
+  const handlePublisherSearchExecuted = useCallback(() => {
+    setWriterResults([]);
+    setPerformerResults([]);
+    setSelectedResults(new Set());
+  }, []);
+
+  // Clear writer and publisher results when performer search is executed
+  const handlePerformerSearchExecuted = useCallback(() => {
+    setWriterResults([]);
+    setPublisherResults([]);
+    setSelectedResults(new Set());
+  }, []);
+
+  // Handle searching performer name in writers
+  const handleSearchPerformerInWriters = useCallback((name: string) => {
+    setWriterSearchQuery(name);
+    setPublisherResults([]);
+    setPerformerResults([]);
+    setSelectedResults(new Set());
+  }, []);
+
+  const handleWriterQueryUsed = useCallback(() => {
+    setWriterSearchQuery('');
+  }, []);
+
   return (
     <div className="min-h-screen bg-background waveform-bg">
       {/* Header */}
@@ -61,7 +96,7 @@ const Index = () => {
                 <Mic2 className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">ASCAP IPI Search</h1>
+                <h1 className="text-xl font-bold tracking-tight">Publishing IPI Search</h1>
                 <p className="text-sm text-muted-foreground">Music Rights Database Explorer</p>
               </div>
             </div>
@@ -99,18 +134,24 @@ const Index = () => {
               icon={<Pen className="h-5 w-5 text-primary" />}
               results={writerResults}
               onResultsChange={setWriterResults}
+              onSearchExecuted={handleWriterSearchExecuted}
+              externalQuery={writerSearchQuery}
+              onExternalQueryUsed={handleWriterQueryUsed}
             />
             <SearchSection
               type="publisher"
               icon={<Building2 className="h-5 w-5 text-secondary" />}
               results={publisherResults}
               onResultsChange={setPublisherResults}
+              onSearchExecuted={handlePublisherSearchExecuted}
             />
             <SearchSection
               type="performer"
               icon={<Mic2 className="h-5 w-5 text-accent" />}
               results={performerResults}
               onResultsChange={setPerformerResults}
+              onSearchExecuted={handlePerformerSearchExecuted}
+              onSearchWriterName={handleSearchPerformerInWriters}
             />
           </div>
         </section>
