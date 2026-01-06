@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import { ascapApi, SearchResult } from '@/lib/api/ascap';
 import { useToast } from '@/hooks/use-toast';
 
@@ -11,17 +13,74 @@ interface SearchSectionProps {
   icon: React.ReactNode;
   results: SearchResult[];
   onResultsChange: (results: SearchResult[]) => void;
+  onSearchExecuted?: () => void;
+  onSearchWriterName?: (name: string) => void;
+  externalQuery?: string;
+  onExternalQueryUsed?: () => void;
 }
 
-export function SearchSection({ type, icon, results, onResultsChange }: SearchSectionProps) {
+export function SearchSection({ 
+  type, 
+  icon, 
+  results, 
+  onResultsChange, 
+  onSearchExecuted,
+  onSearchWriterName,
+  externalQuery,
+  onExternalQueryUsed
+}: SearchSectionProps) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedPerformer, setSelectedPerformer] = useState<string>('');
   const { toast } = useToast();
+
+  // Handle external query for writers
+  useEffect(() => {
+    if (externalQuery && type === 'writer') {
+      setQuery(externalQuery);
+      handleExternalSearch(externalQuery);
+    }
+  }, [externalQuery]);
+
+  const handleExternalSearch = async (searchQuery: string) => {
+    setIsLoading(true);
+    try {
+      const response = await ascapApi.search(searchQuery, 'writer');
+      if (response.success && response.results) {
+        onResultsChange(response.results);
+        if (response.results.length === 0) {
+          toast({
+            title: 'No results',
+            description: `No writers found for "${searchQuery}"`,
+          });
+        }
+      } else {
+        toast({
+          title: 'Search failed',
+          description: response.error || 'Failed to search ASCAP',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to connect to search service',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+      onExternalQueryUsed?.();
+    }
+  };
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     
+    // Notify parent to clear other search boxes
+    onSearchExecuted?.();
+    
     setIsLoading(true);
+    setSelectedPerformer('');
     try {
       const response = await ascapApi.search(query, type);
       if (response.success && response.results) {
@@ -56,6 +115,23 @@ export function SearchSection({ type, icon, results, onResultsChange }: SearchSe
     }
   };
 
+  const handlePerformerSelect = (name: string) => {
+    setSelectedPerformer(name);
+  };
+
+  const handleSearchInWriters = () => {
+    if (selectedPerformer && onSearchWriterName) {
+      onSearchWriterName(selectedPerformer);
+    }
+  };
+
+  // Method to clear this section's state (called by parent)
+  const clearState = () => {
+    setQuery('');
+    onResultsChange([]);
+    setSelectedPerformer('');
+  };
+
   const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
   const typeColors = {
     writer: 'from-primary/20 to-primary/5 border-primary/30',
@@ -84,10 +160,46 @@ export function SearchSection({ type, icon, results, onResultsChange }: SearchSe
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
-        {results.length > 0 && (
+        
+        {type !== 'performer' && results.length > 0 && (
           <p className="mt-2 text-sm text-muted-foreground">
             {results.length} result{results.length !== 1 ? 's' : ''} found
           </p>
+        )}
+
+        {/* Performer results with radio buttons */}
+        {type === 'performer' && results.length > 0 && (
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-muted-foreground mb-2">
+              {results.length} result{results.length !== 1 ? 's' : ''} found
+            </p>
+            <RadioGroup value={selectedPerformer} onValueChange={handlePerformerSelect}>
+              {results.map((result, index) => (
+                <div key={index} className="flex items-center space-x-3 p-2 rounded-md bg-background/30 hover:bg-background/50 transition-colors">
+                  <RadioGroupItem value={result.name} id={`performer-${index}`} />
+                  <Label htmlFor={`performer-${index}`} className="flex-1 cursor-pointer">
+                    <span className="font-medium">{result.name}</span>
+                    {result.ipiNumber && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        (IPI: {result.ipiNumber})
+                      </span>
+                    )}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+            
+            {selectedPerformer && (
+              <Button 
+                onClick={handleSearchInWriters} 
+                className="w-full mt-2"
+                variant="secondary"
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Search "{selectedPerformer}" in Writers
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
