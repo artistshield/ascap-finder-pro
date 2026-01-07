@@ -1,6 +1,11 @@
-import { SavedIPI } from '@/hooks/useSavedIPIs';
+interface ExportItem {
+  name: string;
+  ipi_number: string;
+  type: 'writer' | 'publisher' | 'performer';
+  created_at: string;
+}
 
-export function exportToCSV(data: SavedIPI[]) {
+export function exportToCSV(data: ExportItem[]) {
   const headers = ['Name', 'IPI Number', 'Type', 'Date Saved'];
   const rows = data.map((item) => [
     item.name,
@@ -17,7 +22,7 @@ export function exportToCSV(data: SavedIPI[]) {
   downloadFile(csvContent, 'ascap-ipis.csv', 'text/csv');
 }
 
-export function exportToJSON(data: SavedIPI[]) {
+export function exportToJSON(data: ExportItem[]) {
   const exportData = data.map((item) => ({
     name: item.name,
     ipiNumber: item.ipi_number,

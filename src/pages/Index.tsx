@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { Pen, Building2, Mic2, Save, Download, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Pen, Building2, Mic2, Save, Download, FileText, LogOut, Shield, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchSection } from '@/components/SearchSection';
@@ -10,6 +11,7 @@ import { SearchResult } from '@/lib/api/ascap';
 import { useSavedIPIs } from '@/hooks/useSavedIPIs';
 import { exportToCSV, exportToJSON } from '@/lib/export';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Index = () => {
   const [writerResults, setWriterResults] = useState<SearchResult[]>([]);
@@ -19,6 +21,8 @@ const Index = () => {
   const [writerSearchQuery, setWriterSearchQuery] = useState<string>('');
   const { saveIPIs, isSaving } = useSavedIPIs();
   const { toast } = useToast();
+  const { user, signOut, isAdmin } = useAuth();
+  const navigate = useNavigate();
 
   // Only include writer and publisher results in the table (performer results shown inline)
   const allResults = [...writerResults, ...publisherResults];
@@ -50,6 +54,11 @@ const Index = () => {
     } else {
       exportToJSON(exportData);
     }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/auth');
   };
 
   // Clear writer and publisher results when writer search is executed
@@ -100,23 +109,40 @@ const Index = () => {
                 <p className="text-sm text-muted-foreground">Music Rights Database Explorer</p>
               </div>
             </div>
-            {selectedItems.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">{selectedItems.length} selected</span>
-                <Button size="sm" variant="outline" onClick={() => handleExportSelected('csv')}>
-                  <Download className="h-4 w-4 mr-2" />
-                  CSV
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => handleExportSelected('json')}>
-                  <Download className="h-4 w-4 mr-2" />
-                  JSON
-                </Button>
-                <Button size="sm" onClick={handleSaveSelected} disabled={isSaving}>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save to Collection
+            <div className="flex items-center gap-2">
+              {selectedItems.length > 0 && (
+                <>
+                  <span className="text-sm text-muted-foreground">{selectedItems.length} selected</span>
+                  <Button size="sm" variant="outline" onClick={() => handleExportSelected('csv')}>
+                    <Download className="h-4 w-4 mr-2" />
+                    CSV
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => handleExportSelected('json')}>
+                    <Download className="h-4 w-4 mr-2" />
+                    JSON
+                  </Button>
+                  <Button size="sm" onClick={handleSaveSelected} disabled={isSaving}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save to Collection
+                  </Button>
+                </>
+              )}
+              <div className="flex items-center gap-2 ml-4 pl-4 border-l border-border">
+                {isAdmin && (
+                  <Button size="sm" variant="outline" onClick={() => navigate('/admin')}>
+                    <Shield className="h-4 w-4 mr-2" />
+                    Admin
+                  </Button>
+                )}
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <User className="h-4 w-4" />
+                  <span className="hidden sm:inline">{user?.email}</span>
+                </div>
+                <Button size="sm" variant="ghost" onClick={handleSignOut}>
+                  <LogOut className="h-4 w-4" />
                 </Button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </header>
