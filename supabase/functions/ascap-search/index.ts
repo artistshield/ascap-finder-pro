@@ -339,8 +339,24 @@ function isValidRealName(name: string, stageNameLower: string): boolean {
   const words = name.split(/\s+/).filter(w => w.length > 0);
   if (words.length < 2) return false;
   
-  // Must not contain the stage name
-  if (name.toLowerCase().includes(stageNameLower)) return false;
+  const nameLower = name.toLowerCase().trim();
+  
+  // If the real name EXACTLY matches the stage name, reject it
+  if (nameLower === stageNameLower) return false;
+  
+  // If the real name extends the stage name (has additional words like middle/last name), ACCEPT it
+  // e.g., "Kendrick Lamar Duckworth" for stage name "Kendrick Lamar"
+  // But if it's just a subset or unrelated, be more careful
+  if (nameLower.includes(stageNameLower)) {
+    // Accept if the real name has more words than the stage name (it's an extended version)
+    const stageNameWords = stageNameLower.split(/\s+/).filter(w => w.length > 0);
+    if (words.length > stageNameWords.length) {
+      console.log(`Real name "${name}" extends stage name "${stageNameLower}" - accepting`);
+      return true;
+    }
+    // Otherwise reject (same or fewer words means it's not a "real" name)
+    return false;
+  }
   
   // Reasonable length
   if (name.length < 5 || name.length > 60) return false;
