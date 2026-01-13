@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Writer, PRO_OPTIONS, ROLE_OPTIONS } from './types';
 import { PublisherCard } from './PublisherCard';
+import { AutocompleteInput } from './AutocompleteInput';
+import { SavedIPI } from '@/hooks/useSavedIPIs';
 
 interface WriterCardProps {
   writer: Writer;
@@ -13,9 +15,11 @@ interface WriterCardProps {
   onChange: (writer: Writer) => void;
   onRemove: () => void;
   canRemove: boolean;
+  savedWriters: SavedIPI[];
+  savedPublishers: SavedIPI[];
 }
 
-export const WriterCard = ({ writer, index, onChange, onRemove, canRemove }: WriterCardProps) => {
+export const WriterCard = ({ writer, index, onChange, onRemove, canRemove, savedWriters, savedPublishers }: WriterCardProps) => {
   const updateField = <K extends keyof Writer>(field: K, value: Writer[K]) => {
     onChange({ ...writer, [field]: value });
   };
@@ -71,9 +75,17 @@ export const WriterCard = ({ writer, index, onChange, onRemove, canRemove }: Wri
         {/* Full Name */}
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Full Name</Label>
-          <Input
+          <AutocompleteInput
             value={writer.fullName}
-            onChange={(e) => updateField('fullName', e.target.value)}
+            onChange={(value) => updateField('fullName', value)}
+            onSelect={(ipi) => {
+              onChange({
+                ...writer,
+                fullName: ipi.name,
+                ipiNumber: ipi.ipi_number,
+              });
+            }}
+            suggestions={savedWriters}
             placeholder="Writer name"
             className="bg-background/50"
           />
@@ -154,6 +166,7 @@ export const WriterCard = ({ writer, index, onChange, onRemove, canRemove }: Wri
             publisher={writer.publisher}
             onChange={(pub) => updateField('publisher', pub)}
             onRemove={removePublisher}
+            savedPublishers={savedPublishers}
           />
         )}
       </CardContent>

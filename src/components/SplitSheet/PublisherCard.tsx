@@ -4,14 +4,17 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Publisher, PRO_OPTIONS } from './types';
+import { AutocompleteInput } from './AutocompleteInput';
+import { SavedIPI } from '@/hooks/useSavedIPIs';
 
 interface PublisherCardProps {
   publisher: Publisher;
   onChange: (publisher: Publisher) => void;
   onRemove: () => void;
+  savedPublishers: SavedIPI[];
 }
 
-export const PublisherCard = ({ publisher, onChange, onRemove }: PublisherCardProps) => {
+export const PublisherCard = ({ publisher, onChange, onRemove, savedPublishers }: PublisherCardProps) => {
   const updateField = <K extends keyof Publisher>(field: K, value: Publisher[K]) => {
     onChange({ ...publisher, [field]: value });
   };
@@ -37,9 +40,17 @@ export const PublisherCard = ({ publisher, onChange, onRemove }: PublisherCardPr
       {/* Publisher Name */}
       <div className="space-y-2">
         <Label className="text-xs text-muted-foreground">Publisher Name</Label>
-        <Input
+        <AutocompleteInput
           value={publisher.name}
-          onChange={(e) => updateField('name', e.target.value)}
+          onChange={(value) => updateField('name', value)}
+          onSelect={(ipi) => {
+            onChange({
+              ...publisher,
+              name: ipi.name,
+              ipiNumber: ipi.ipi_number,
+            });
+          }}
+          suggestions={savedPublishers}
           placeholder="Publisher name"
           className="bg-background/50"
         />
