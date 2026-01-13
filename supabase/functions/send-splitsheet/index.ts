@@ -1,7 +1,4 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -148,6 +145,15 @@ const handler = async (req: Request): Promise<Response> => {
     console.log("Sending split sheet for:", songInfo.title);
     console.log("Writers:", writers.length);
 
+    const brevoApiKey = Deno.env.get("BREVO_API_KEY");
+    if (!brevoApiKey) {
+      console.error("BREVO_API_KEY not configured");
+      return new Response(
+        JSON.stringify({ error: "Brevo API key not configured" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     // Collect all recipients
     const recipients: { email: string; name: string }[] = [];
     
@@ -169,20 +175,34 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Send email to each recipient
+    // Send email to each recipient using Brevo
     const results = await Promise.all(
       recipients.map(async (recipient) => {
         const html = generateSplitSheetHTML(songInfo, writers, recipient.name);
         
-        const emailResponse = await resend.emails.send({
-          from: "Split Sheet <splitsheet@artistshield.com>",
-          to: [recipient.email],
-          subject: `Split Sheet for Review: "${songInfo.title}"`,
-          html,
+        const emailResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
+          method: "POST",
+          headers: {
+            "accept": "application/json",
+            "api-key": brevoApiKey,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            sender: { name: "Artist Shield", email: "splitsheet@artistshield.com" },
+            to: [{ email: recipient.email, name: recipient.name }],
+            subject: `Split Sheet for Review: "${songInfo.title}"`,
+            htmlContent: html,
+          }),
         });
         
-        console.log(`Email sent to ${recipient.email}:`, emailResponse);
-        return { email: recipient.email, ...emailResponse };
+        const result = await emailResponse.json();
+        console.log(`Email sent to ${recipient.email}:`, result);
+        
+        if (!emailResponse.ok) {
+          throw new Error(result.message || `Failed to send email to ${recipient.email}`);
+        }
+        
+        return { email: recipient.email, success: true, ...result };
       })
     );
 
