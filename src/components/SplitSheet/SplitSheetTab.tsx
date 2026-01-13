@@ -8,6 +8,7 @@ import { ShareSummary } from './ShareSummary';
 import { SongInfo, Writer } from './types';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { useSavedIPIs } from '@/hooks/useSavedIPIs';
 
 const createEmptyWriter = (): Writer => ({
   id: crypto.randomUUID(),
@@ -32,6 +33,10 @@ export const SplitSheetTab = () => {
   const [writers, setWriters] = useState<Writer[]>([createEmptyWriter()]);
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
+  const { savedIPIs } = useSavedIPIs();
+
+  const savedWriters = savedIPIs.filter((ipi) => ipi.type === 'writer');
+  const savedPublishers = savedIPIs.filter((ipi) => ipi.type === 'publisher');
 
   const addWriter = () => {
     setWriters([...writers, createEmptyWriter()]);
@@ -140,6 +145,8 @@ export const SplitSheetTab = () => {
               onChange={(w) => updateWriter(index, w)}
               onRemove={() => removeWriter(index)}
               canRemove={writers.length > 1}
+              savedWriters={savedWriters}
+              savedPublishers={savedPublishers}
             />
           ))}
         </div>
